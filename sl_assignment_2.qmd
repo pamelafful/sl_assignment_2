@@ -1,0 +1,175 @@
+---
+title: ""
+author: ""
+editor: visual
+format:
+  pdf:
+    fig-pos: 'H'
+documentclass: article
+include-in-header:
+  text: |
+    \usepackage{graphicx}
+
+include-before-body:
+  text: |
+    \begin{titlepage}
+    \centering
+
+    {\Large University of Cape Town\par}
+    \vspace{0.8cm}
+
+    \includegraphics[width=0.35\textwidth]{CopyOfUCTLogo.jpg}
+
+    \vspace{2cm}
+
+    {\Large Supervised Learning Assignment 2\par}
+    
+    \vspace{0.5cm}
+    
+    {\Large AirBnB Bookings Prediction\par}
+
+    \vspace{1.5cm}
+
+    {\large Pamela Afful\par}
+
+    \vspace{0.5cm}
+
+    {\large Student Number: AFFPAM001\par}
+
+    \vfill
+
+    {\large \today\par}
+
+    \end{titlepage}
+    
+execute: 
+  cache: true
+  warning: false
+  message: false
+  echo: false
+#bibliography: references.bib
+---
+
+```{r libs, eval=TRUE, echo=FALSE}
+#| message: false
+#| warning: false
+
+# install.packages(c("modelsummary", "fixest"))
+
+#install.packages("GGally")
+#install.packages("gtsummary")
+#install.packages('stargazer')
+#install.packages('patchwork')
+#install.packages("glmnet")
+#install.packages('lmridge')
+#install.packages('MASS')
+#install.packages("interactions")
+#tinytex::tlmgr_install("tabularray")
+#install.packages("car")
+
+library(dplyr)
+library(knitr)
+#library(skimr)
+library(plotly)
+library(ggplot2)
+library(ggpubr)
+library(lubridate)
+library(zoo)
+library(tidyverse)
+library(GGally)
+library(modelsummary)
+library(stargazer)
+library(gtsummary)
+library(patchwork)
+library(glmnet)
+library(lmridge)
+library(tidyr)
+library(caret)
+library(MASS)
+library(dplyr)
+library(interactions)
+library(kableExtra)
+library(patchwork) 
+library(knitr)
+library(broom)
+library(car)
+library(maps)
+library(RColorBrewer)
+
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+```
+
+You can add options to executable code like this
+
+```{r, data_load, eval=T,echo=F}
+
+listings_data=read.csv('listings.csv')
+names(listings_data)
+
+
+```
+
+# Data Wrangling
+
+```{r, data_wrang, eval=T,echo=F}
+
+listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_since),
+                         host_response_time=factor(host_response_time,levels=c("within an hour","within a few hours",                               "within a day", "a few days or more")),
+                         host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
+                         room_type=factor(room_type,levels=unique(listings_data$room_type)),
+                         instant_bookable=factor(instant_bookable,level=c('t','f')),
+                         fully_booked_30=factor(fully_booked_30,levels=c('no','yes')),
+                         host_verifications=factor(case_when(host_verifications %in% c("['phone']") ~'phone_only',
+                                                      host_verifications %in% c("['email', 'phone']" ,"['email', 'phone', 'work_email']", "['phone', 'work_email']") ~'phone_email',
+                                                      host_verifications %in% c("['email']") ~'email_only'
+                           
+                         ),levels=c('phone_only','phone_email','email_only'))
+                         
+                         
+                         )
+```
+
+```{r,eda,eval=T,echo=F}
+
+# Plot the Air BNB locations
+
+
+# cities_poly <- ne_download(scale = 'large', type = 'urban_areas', category = 'cultural')
+
+#names(cities_poly)
+
+za_admin2 <- ne_states(country = "South Africa", returnclass = "sf")
+cape_town <- za_admin2[grep("Western Cape", za_admin2$name), ]
+
+#View(za_admin2 %>% filter(name=='Western Cape'))
+
+cols <- ifelse(listings_data_cleaned$fully_booked_30 == 1, "red", "blue")
+
+plot(st_geometry(cape_town ),
+     col = NA,
+     border = "black",
+     lwd = 2,
+     xlab = "Longitude",
+     ylab = "Latitude")
+
+points(listings_data_cleaned$longitude,
+       listings_data_cleaned$latitude,
+       pch = 16,
+       cex = 0.5,
+       col = cols)
+
+legend("topright",
+       legend = c("Not Fully Booked", "Fully Booked"),
+       col = c("blue", "red"),
+       pch = 16,
+       bty = "n",
+       title = "Fully Booked 30",
+       cex = 0.9)
+```
+
+```{r}
+
+```
