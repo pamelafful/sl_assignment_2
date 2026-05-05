@@ -171,5 +171,35 @@ legend("topright",
 ```
 
 ```{r}
+# used stratified smapling for training
+listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(n_cnt=length(host_id)) %>% ggplot(aes(x=fully_booked_30,y=n_cnt
+))+
+  geom_col(fill='steelblue')+
+  labs(title = "Fully Booked vs Non Fully Booked",y='#observations',
+       x = "30-day booked status")+
+  theme_minimal()
+```
+
+```{r}
+# re-engineer the host sinece feature to an interger in months
+# keep date fixed to when this assignment satrted=May
+listings_data_cleaned$host_since_months_int =listings_data_cleaned %>% mutate(host_since=ymd(host_since)  ) %>% 
+  mutate(host_since_trunc=floor_date(host_since,unit='month')) %>% 
+  mutate(host_since_months_int= interval(host_since_trunc,floor_date(today(),unit='month'))%/% months(1) ) %>% mutate(current_date= floor_date( today(),unit='month' ) ) %>% 
+  dplyr::select(host_since_trunc,host_since_months_int,current_date ) %>% pull(host_since_months_int)
+
+ # create intervals for EDA purposes
+listings_data_cleaned %>% mutate(host_since_intervals=  cut(host_since_months_int, breaks=c(0,48,96,114,197),labels = c("0-2 yrs", "2-4 yrs", "4-6 yrs",'6+ yrs') )) %>% 
+  group_by(host_since_intervals,fully_booked_30) %>% 
+  summarize(n_cnt=length(host_id)) %>% 
+ggplot(aes(x=fully_booked_30,y=n_cnt, fill=host_since_intervals))+
+  geom_col()+
+  labs(title = "Fully Booked vs Non Fully Booked",y='#observations',
+       x = "30-day booked status")+
+  theme_minimal()
+  
+
 
 ```
+
+}
