@@ -85,7 +85,7 @@ library(glmnet)
 library(lmridge)
 library(tidyr)
 library(caret)
-library(MASS)
+#library(MASS)
 library(dplyr)
 library(interactions)
 library(kableExtra)
@@ -95,7 +95,7 @@ library(broom)
 library(car)
 library(maps)
 library(RColorBrewer)
-
+library(tree)
 library(sf)
 library(rnaturalearth)
 library(rnaturalearthdata)
@@ -107,7 +107,7 @@ You can add options to executable code like this
 ```{r, data_load, eval=T,echo=F}
 
 listings_data=read.csv('listings.csv')
-names(listings_data)
+
 
 
 ```
@@ -117,7 +117,7 @@ names(listings_data)
 ```{r, data_wrang, eval=T,echo=F}
 
 listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_since),
-                         host_response_time=factor(host_response_time,levels=c("within an hour","within a few hours",                               "within a day", "a few days or more")),
+                         host_response_time=factor(host_response_time,levels=c("within an hour","within a few hours","within a day", "a few days or more")),
                          host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
                          room_type=factor(room_type,levels=unique(listings_data$room_type)),
                          instant_bookable=factor(instant_bookable,level=c('t','f')),
@@ -148,15 +148,17 @@ cape_town <- za_admin2[grep("Western Cape", za_admin2$name), ]
 
 cols <- ifelse(listings_data_cleaned$fully_booked_30 == 1, "red", "blue")
 
-plot(st_geometry(cape_town ),
-     col = NA,
-     border = "black",
-     lwd = 2,
-     xlab = "Longitude",
-     ylab = "Latitude")
+# plot(st_geometry(cape_town ),
+#      col = NA,
+#      border = "black",
+#      lwd = 2,
+#      xlab = "Longitude",
+#      ylab = "Latitude")
 
-points(listings_data_cleaned$longitude,
-       listings_data_cleaned$latitude,
+plot(listings_data_cleaned$longitude,
+      listings_data_cleaned$latitude,
+     xlab = "Longitude",
+     ylab = "Latitude",
        pch = 16,
        cex = 0.5,
        col = cols)
@@ -170,7 +172,11 @@ legend("topright",
        cex = 0.9)
 ```
 
-```{r}
+# EDA and Feature Selection
+
+```{r eval=TRUE, echo=F}
+#| message: false
+#| warning: false
 # used stratified smapling for training
 listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(n_cnt=length(host_id)) %>% ggplot(aes(x=fully_booked_30,y=n_cnt
 ))+
@@ -180,7 +186,9 @@ listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(n_cnt=length(h
   theme_minimal()
 ```
 
-```{r}
+```{r host_since, eval=TRUE, echo=F}
+#| message: false
+#| warning: false
 # re-engineer the host sinece feature to an interger in months
 # keep date fixed to when this assignment satrted=May
 listings_data_cleaned$host_since_months_int =listings_data_cleaned %>% mutate(host_since=ymd(host_since)  ) %>% 
@@ -193,7 +201,7 @@ listings_data_cleaned %>% mutate(host_since_intervals=  cut(host_since_months_in
   group_by(host_since_intervals,fully_booked_30) %>% 
   summarize(n_cnt=length(host_id)) %>% 
 ggplot(aes(x=fully_booked_30,y=n_cnt, fill=host_since_intervals))+
-  geom_col()+
+  geom_col(position="dodge")+
   labs(title = "Fully Booked vs Non Fully Booked",y='#observations',
        x = "30-day booked status")+
   theme_minimal()
@@ -202,4 +210,138 @@ ggplot(aes(x=fully_booked_30,y=n_cnt, fill=host_since_intervals))+
 
 ```
 
-}
+Use a novel decision tree to gauge which features could be important for determining the response variable. Since we have an imbalanced class, a weighted decision tree is used:\
+<https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>\
+
+```{r get_feat, eval=T, echo=F}
+#| message: false
+#| warning: false
+
+# Can't use vanilla decision tree as the data data is extremly unbalanced :()
+# Thus we have to assign weights to the binary classes, as a proxy for importance
+# We put more weight to the rare class, in this case fully_booked_30=yes
+
+# ratio= #obs=1:#obs=yes 
+library(rpart)
+cnt_no_obs=listings_data_cleaned %>% filter(fully_booked_30=='no') %>% count()
+cnt_yes_obs=listings_data_cleaned %>% filter(fully_booked_30=='yes') %>% count()
+class_ratio=cnt_no_obs/cnt_yes_obs
+
+weights_vector=ifelse(listings_data_cleaned$fully_booked_30=='yes',class_ratio,1)
+
+weights_vector=unlist(weights_vector)
+
+features_all=names(listings_data_cleaned)
+features=features_all[! features_all %in% c('host_since','host_id')]
+
+listings_data_cleaned_features=listings_data_cleaned %>% dplyr::select(any_of(features))
+
+eda_tree <-  rpart(fully_booked_30 ~ ., data = listings_data_cleaned_features,weights=weights_vector)
+
+
+```
+
+![Initial Decision Tree Feature/ Class Splits](tree.png){width="410"}
+
+Features used to reduce RSS during splitting were **reviews_per_month (the largest reduction), minimum_night,** and **price.**\
+BnB listings with reviews_per_month greater than 0.695 all had terminal nodes with the categorisation "no" for the response variable. Price and minimum nights were determining factors for listings with a minimum number of nights less than 2.5, which ended in "yes". Further splitting this region, for listings where the minimum was greater than 2.5, listings with prices greater than 905.5 were also categorised as "yes".
+
+```{r scatter_plot, eval=T, echo=FALSE}
+#| message: false
+#| warning: false
+#| fig-height: 8
+#| fig-width: 8
+split_feats=c('reviews_per_month','minimum_nights','price')
+
+
+listings_data_cleaned %>% dplyr::select(reviews_per_month,minimum_nights,price,fully_booked_30) %>% 
+ggpairs( 1:4,mapping = aes(color = fully_booked_30), legend = 1 ) +
+  labs(title = "Decision Tree Used Feature Pairwise Plot",color='30d Fully Booked')+
+  theme_minimal()+
+  theme(legend.position = "bottom") #setdiff(split_feats, "fully_booked_30")
+
+```
+
+-   comeback and add more
+
+# Model Training
+
+**Baseline Model Vanilla Logistic Regression**
+
+```{r model_log, eval=T, echo=F}
+#| message: false
+#| warning: false
+
+library(broom) #For nice tables
+log_mod <- glm(fully_booked_30 ~ ., data = listings_data_cleaned_features, family = binomial)
+
+# log_mod |> 
+#   tidy() |>
+#   kable(digits = 2) |> 
+#   kable_styling(full_width = FALSE)
+
+
+bl_summ=tbl_regression(log_mod,
+                       intercept = TRUE) %>%
+  add_significance_stars() %>%
+  add_glance_source_note(
+    include = c(nobs) #r.squared, adj.r.squared, 
+  ) %>%
+  # modify_source_note(
+  #   source_note = f_text
+  #) %>%
+  modify_caption("**Baseline Model: Logistic Regression, All Features**")
+
+# exp(coef(log_mod)) |>
+#   kbl(format = 'pdf',
+#       digits = 3, 
+#       col.names = c('<i>X</i><sub>j</sub>', 'exp(&beta;<sub>j</sub>)'),
+#       escape = FALSE) |>
+#   kable_styling(full_width = FALSE)
+
+```
+
+-   ![Baseline Logistic Regression Summary](logistic_regress_summary.png){width="473" height="555"}
+
+-   Significant Features:
+
+    -   Intercept ( which absorbes the omitted categorical variables: within a few hours, instant bookable=T)
+
+    -   Latitude and Longitude,
+
+    -   Bedrooms,
+
+    -   Reviews per month
+
+    -   Review Score Ratings
+
+    -   Instant bookable=F,
+
+    -   Host Since (Measured in months)
+
+-   Insignificant Features:
+
+    -   The rest\* comeback
+
+    -   Most interestingly the price!-\
+
+```{r, regul, echo=TRUE,eval=F}
+
+library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
+
+features_train=features[features!='fully_booked_30']
+x_train =listings_data_cleaned_features %>% dplyr::select(any_of(features_train))
+y_train=listings_data_cleaned_features$fully_booked_30
+
+# Fit the lasso and plot using plotmo
+# I think it looks wiered due to the imbalanced nature of the data
+logmod_l1 <- glmnet(x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector)
+plot_glmnet(logmod_l1, xvar = 'norm')
+
+
+```
+
+```{r}
+#coef(logmod_l1, s = 2.5)
+print(logmod_l1)
+```

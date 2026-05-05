@@ -28,3 +28,10 @@ kableExtra
 broom
 carData
 car
+maps
+RColorBrewer
+tree
+sf
+rnaturalearth
+rnaturalearthdata
+rpart
