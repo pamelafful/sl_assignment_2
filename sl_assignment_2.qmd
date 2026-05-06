@@ -99,7 +99,8 @@ library(tree)
 library(sf)
 library(rnaturalearth)
 library(rnaturalearthdata)
-
+library(ranger)
+library(randomForest)
 ```
 
 You can add options to executable code like this
@@ -325,23 +326,104 @@ bl_summ=tbl_regression(log_mod,
 
     -   Most interestingly the price!-\
 
-```{r, regul, echo=TRUE,eval=F}
+```{r, regul, echo=TRUE,eval=T}
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
 features_train=features[features!='fully_booked_30']
-x_train =listings_data_cleaned_features %>% dplyr::select(any_of(features_train))
+x_train =data.matrix(listings_data_cleaned_features %>% dplyr::select(any_of(features_train)))
 y_train=listings_data_cleaned_features$fully_booked_30
 
 # Fit the lasso and plot using plotmo
 # I think it looks wiered due to the imbalanced nature of the data
-logmod_l1 <- glmnet(x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector)
-plot_glmnet(logmod_l1, xvar = 'norm')
+logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector)
+plot(logmod_l1)#, xvar = 'norm')
 
 
 ```
 
-```{r}
+From the above, the best number of non-zero coefficients equals 9 (using 1SE discrimination). This is used to identify the zero-coefficient features.
+
+```{r,zero_coeff,echo=FALSE,eval=T}
 #coef(logmod_l1, s = 2.5)
-print(logmod_l1)
+#logmod_l1$df
+
+# penalized coeff, lambda=lambda.1se
+best_coeff=as.data.frame(as.matrix(coef(logmod_l1, s = "lambda.1se") )) %>% rownames_to_column(var = "Feature") %>% rename(Coefficient=lambda.1se)
+
+
+
+best_coeff %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE
+  ) %>%
+  row_spec(
+    which(best_coeff$Coefficient == 0),
+    color = "red"
+  ) %>%
+  kable_styling(latex_options = "hold_position")
+
+
+
+
+```
+
+Penalized Features:\
+
+-   response ratwe
+
+-   acceptance rate
+
+-   is_superhost
+
+-   host ver
+
+-   lat and long
+
+-   all those in red
+
+```{r,rd,echo=F,eval=TRUE}
+library(caret)
+
+#CV for mtry,min_node size
+# rf=randomForest(fully_booked_30 ~ ., data = listings_data_cleaned_features,weights=weights_vector,importance=T)
+
+rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), # no. of features to randomly select for each tree
+                             splitrule = 'gini', #classification      
+                             min.node.size = seq(1,20,5) )# controls the smallest number of training samples required for a node to be eligeble for a split
+
+
+
+ctrl = trainControl(method = 'oob', verboseIter = F)   
+
+
+rf_gridsearch <- train(fully_booked_30 ~ ., 
+                             data = listings_data_cleaned_features,
+                             method = 'ranger', # for random forest
+                             num.trees = 250, # should this be included in the gridsearch?
+                             importance = 'impurity',
+                             #verbose = T,
+                             trControl = ctrl,
+                             tuneGrid = rf_grid,
+                              weights=weights_vector) #to cater for an imbalanced dataset
+
+rf_gridsearch
+write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
+```
+
+```{r,rd_res,echo=F,eval=T}
+results_df=data.frame(rf_gridsearch$results)
+best_param=rf_gridsearch$bestTune
+
+results_df %>% group_by(min.node.size,mtry) %>% summarize(Accuracy=mean(Accuracy)) %>% 
+  ggplot(aes(x=min.node.size,y=Accuracy,color=mtry))+
+  geom_line()+
+  geom_point()+
+  facet_wrap(~mtry)+
+  labs(title = "Grid Search Results",y='weighted accuracy',
+       x = "min node size",color='#randomized tree features')+
+  theme_minimal()
+  
+
 ```
