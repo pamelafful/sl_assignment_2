@@ -398,32 +398,72 @@ rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), # no.
 ctrl = trainControl(method = 'oob', verboseIter = F)   
 
 
-rf_gridsearch <- train(fully_booked_30 ~ ., 
-                             data = listings_data_cleaned_features,
-                             method = 'ranger', # for random forest
-                             num.trees = 250, # should this be included in the gridsearch?
-                             importance = 'impurity',
-                             #verbose = T,
-                             trControl = ctrl,
-                             tuneGrid = rf_grid,
-                              weights=weights_vector) #to cater for an imbalanced dataset
+# rf_gridsearch <- train(fully_booked_30 ~ ., 
+#                              data = listings_data_cleaned_features,
+#                              method = 'ranger', # for random forest
+#                              num.trees = 250, # should this be included in the gridsearch?
+#                              importance = 'impurity',
+#                              #verbose = T,
+#                              trControl = ctrl,
+#                              tuneGrid = rf_grid,
+#                               weights=weights_vector) #to cater for an imbalanced dataset
 
-rf_gridsearch
-write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
+
+#write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
+#saveRDS(rf_gridsearch, file = "rf_gridsearch.rds")
+
+
+rf_gridsearch =readRDS("rf_gridsearch.rds")
 ```
 
 ```{r,rd_res,echo=F,eval=T}
 results_df=data.frame(rf_gridsearch$results)
 best_param=rf_gridsearch$bestTune
 
-results_df %>% group_by(min.node.size,mtry) %>% summarize(Accuracy=mean(Accuracy)) %>% 
-  ggplot(aes(x=min.node.size,y=Accuracy,color=mtry))+
-  geom_line()+
-  geom_point()+
-  facet_wrap(~mtry)+
-  labs(title = "Grid Search Results",y='weighted accuracy',
-       x = "min node size",color='#randomized tree features')+
-  theme_minimal()
+# results_df %>% group_by(min.node.size,mtry) %>% summarize(Accuracy=mean(Accuracy)) %>% 
+#   ggplot(aes(x=min.node.size,y=Accuracy,color=mtry))+
+#   geom_line()+
+#   geom_point()+
+#   facet_wrap(~mtry)+
+#   labs(title = "Grid Search Results",y='weighted accuracy',
+#        x = "min node size",color='#randomized tree features')+
+#   theme_minimal()
+# 
+best_oob_accuracy=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(Accuracy)
+
+best_oob_mtry=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(mtry)
+
+best_oob_min_node=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(min.node.size)
   
 
+
+
+
+library(lattice)
+
+plot(
+  rf_gridsearch,
+  xlim = range(rf_gridsearch$results$mtry) + c(-1, 0.5),
+  ylim = range(rf_gridsearch$results$Accuracy) + c(-0.01, 0.0028),
+  panel = function(x, y, ...) {
+    panel.xyplot(x, y, ...)
+    panel.abline(h = best_oob_accuracy, col = "red", lwd = 1,lty = 2)
+    panel.text(
+      x = best_oob_mtry,
+      y = best_oob_accuracy,
+      labels = paste(
+        "best mtry:", best_oob_mtry,
+        "\nbest min node:", best_oob_min_node
+      ),
+      pos = 3,
+      cex = 0.7   
+    )
+  }
+)
+```
+
+```{r}
+print(rf_gridsearch$bestTune) # remember we want the combination that yields the highest OOB accuracy
+
+results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(Accuracy)
 ```

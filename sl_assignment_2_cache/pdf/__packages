@@ -38,3 +38,5 @@ rpart
 Formula
 plotrix
 plotmo
+ranger
+randomForest
