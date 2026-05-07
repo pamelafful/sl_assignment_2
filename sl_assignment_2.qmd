@@ -47,6 +47,7 @@ execute:
   warning: false
   message: false
   echo: false
+  enabled: true
 #bibliography: references.bib
 ---
 
@@ -101,6 +102,7 @@ library(rnaturalearth)
 library(rnaturalearthdata)
 library(ranger)
 library(randomForest)
+library(gbm)
 ```
 
 You can add options to executable code like this
@@ -122,7 +124,7 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
                          room_type=factor(room_type,levels=unique(listings_data$room_type)),
                          instant_bookable=factor(instant_bookable,level=c('t','f')),
-                         fully_booked_30=factor(fully_booked_30,levels=c('no','yes')),
+                         fully_booked_30=factor(fully_booked_30,levels=c('yes','no')),
                          host_verifications=factor(case_when(host_verifications %in% c("['phone']") ~'phone_only',
                                                       host_verifications %in% c("['email', 'phone']" ,"['email', 'phone', 'work_email']", "['phone', 'work_email']") ~'phone_email',
                                                       host_verifications %in% c("['email']") ~'email_only'
@@ -302,7 +304,9 @@ bl_summ=tbl_regression(log_mod,
 
 ```
 
--   ![Baseline Logistic Regression Summary](logistic_regress_summary.png){width="473" height="555"}
+-   
+
+    ![Baseline Logistic Regression Summary](logistic_regress_summary.png){width="473" height="555"}
 
 -   Significant Features:
 
@@ -326,7 +330,7 @@ bl_summ=tbl_regression(log_mod,
 
     -   Most interestingly the price!-\
 
-```{r, regul, echo=TRUE,eval=T}
+```{r, regul, echo=F,eval=T}
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
@@ -466,4 +470,69 @@ plot(
 print(rf_gridsearch$bestTune) # remember we want the combination that yields the highest OOB accuracy
 
 results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(Accuracy)
+```
+
+**Boosting Model**
+
+Used non-zero features from the regularised model to speed up traning- we've established that the majority of these are not relevant anyway through CV
+
+Used features:
+
+```{r,echo=F,eval=F}
+non_zero_feats=best_coeff %>% filter(Coefficient!=0) %>% pull(Feature)
+
+logLossSummary <- function(data, lev = NULL, model = NULL) {
+  eps <- 1e-15
+  
+
+  p <- pmin(pmax(data$No, eps), 1 - eps)
+  
+  logLoss <- -mean(data$obs == "No" * log(p) +
+                   data$obs == "Yes" * log(1 - p))
+  
+  c(logLoss = logLoss)
+}
+```
+
+```{r,gbm_fit,eval=F,echo=F}
+
+# Use Cv
+
+# ctrl <- trainControl(method = 'cv', number = 10, verboseIter = T)
+# 
+# gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
+# 
+# gbm_lib <- gbm(full_booked_30 ~ .,data =gbm_feats, 
+#                distribution =  "bernoulli", #Applies squared error loss 
+#                n.trees = 1000, # Needs CV
+#                interaction.depth = 1, #$ Need CV
+#                shrinkage = 0.01, # Needs Cv
+#                bag.fraction = 1,
+#                weights_vector)   # to cater for the extreme data imbalance
+# 
+# yhat_gbm <- gbm_lib$fit
+# (mse_gbm <- mean((y - yhat_gbm)^2))
+```
+
+```{r,gbm_fit,eval=F,echo=F}
+ctrl = trainControl(method = 'cv', number = 10, verboseIter = F)
+
+gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
+
+
+gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
+                              interaction.depth = seq(1, 5, 2),
+                              shrinkage =c(seq(0.01,0.10,0.02),0.10),
+                              n.minobsinnode = 10,
+                              classProbs = TRUE,
+                              summaryFunction = twoClassSummary)
+
+gbm_gridsearch <- train(fully_booked_30 ~ .,data =gbm_feats,
+                              method = 'gbm',
+                              distribution = "bernoulli", # 
+                              trControl = ctrl,
+                              verbose = T,
+                              tuneGrid = gbm_grid,
+                              weights=weights_vector)
+save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
 ```
