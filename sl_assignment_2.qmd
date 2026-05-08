@@ -103,6 +103,8 @@ library(rnaturalearthdata)
 library(ranger)
 library(randomForest)
 library(gbm)
+library(Metrics)
+library(lattice)
 ```
 
 You can add options to executable code like this
@@ -144,8 +146,8 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
 
 #names(cities_poly)
 
-za_admin2 <- ne_states(country = "South Africa", returnclass = "sf")
-cape_town <- za_admin2[grep("Western Cape", za_admin2$name), ]
+# za_admin2 <- ne_states(country = "South Africa", returnclass = "sf")
+# cape_town <- za_admin2[grep("Western Cape", za_admin2$name), ]
 
 #View(za_admin2 %>% filter(name=='Western Cape'))
 
@@ -269,6 +271,21 @@ ggpairs( 1:4,mapping = aes(color = fully_booked_30), legend = 1 ) +
 
 # Model Training
 
+Define the Log Loss Function
+
+```{r,logloss,eval=T,echo=F}
+log_loss=function(data,lev = NULL, model = NULL){
+  
+  ytrue <- as.numeric(data$obs)-1 # actuals, turn back to "numbers"
+  
+  # Force probability to numeric
+  yhat <- as.numeric(as.character(data$no))# predicted probabilities for positive class
+  
+  c(LogLoss = logLoss(ytrue, yhat)) # return logloss at each kfold iteration
+}
+
+```
+
 **Baseline Model Vanilla Logistic Regression**
 
 ```{r model_log, eval=T, echo=F}
@@ -330,7 +347,11 @@ bl_summ=tbl_regression(log_mod,
 
     -   Most interestingly the price!-\
 
-```{r, regul, echo=F,eval=T}
+**L1 Regularazation**
+
+```{r regul, eval=T, echo=F}
+#| message: false
+#| warning: false
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
@@ -340,8 +361,8 @@ y_train=listings_data_cleaned_features$fully_booked_30
 
 # Fit the lasso and plot using plotmo
 # I think it looks wiered due to the imbalanced nature of the data
-logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector)
-plot(logmod_l1)#, xvar = 'norm')
+logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector,type.measure="class")
+plot(logmod_l1)
 
 
 ```
@@ -354,7 +375,6 @@ From the above, the best number of non-zero coefficients equals 9 (using 1SE dis
 
 # penalized coeff, lambda=lambda.1se
 best_coeff=as.data.frame(as.matrix(coef(logmod_l1, s = "lambda.1se") )) %>% rownames_to_column(var = "Feature") %>% rename(Coefficient=lambda.1se)
-
 
 
 best_coeff %>%
@@ -387,6 +407,10 @@ Penalized Features:\
 
 -   all those in red
 
+**Random Forest**
+
+Using all
+
 ```{r,rd,echo=F,eval=TRUE}
 library(caret)
 
@@ -398,23 +422,22 @@ rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), # no.
                              min.node.size = seq(1,20,5) )# controls the smallest number of training samples required for a node to be eligeble for a split
 
 
-
-ctrl = trainControl(method = 'oob', verboseIter = F)   
-
-
-# rf_gridsearch <- train(fully_booked_30 ~ ., 
+# Sinnce method is OOB the log_loss summary function cannot be used
+# ctrl = trainControl(method = 'oob',number = 10, verboseIter = F)   
+# 
+# 
+# rf_gridsearch <- train(fully_booked_30 ~ .,
 #                              data = listings_data_cleaned_features,
 #                              method = 'ranger', # for random forest
 #                              num.trees = 250, # should this be included in the gridsearch?
 #                              importance = 'impurity',
-#                              #verbose = T,
 #                              trControl = ctrl,
 #                              tuneGrid = rf_grid,
 #                               weights=weights_vector) #to cater for an imbalanced dataset
 
 
-#write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
-#saveRDS(rf_gridsearch, file = "rf_gridsearch.rds")
+write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
+saveRDS(rf_gridsearch, file = "rf_gridsearch.rds")
 
 
 rf_gridsearch =readRDS("rf_gridsearch.rds")
@@ -424,31 +447,17 @@ rf_gridsearch =readRDS("rf_gridsearch.rds")
 results_df=data.frame(rf_gridsearch$results)
 best_param=rf_gridsearch$bestTune
 
-# results_df %>% group_by(min.node.size,mtry) %>% summarize(Accuracy=mean(Accuracy)) %>% 
-#   ggplot(aes(x=min.node.size,y=Accuracy,color=mtry))+
-#   geom_line()+
-#   geom_point()+
-#   facet_wrap(~mtry)+
-#   labs(title = "Grid Search Results",y='weighted accuracy',
-#        x = "min node size",color='#randomized tree features')+
-#   theme_minimal()
-# 
+
 best_oob_accuracy=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(Accuracy)
 
 best_oob_mtry=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(mtry)
 
 best_oob_min_node=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(min.node.size)
   
-
-
-
-
-library(lattice)
-
 plot(
   rf_gridsearch,
   xlim = range(rf_gridsearch$results$mtry) + c(-1, 0.5),
-  ylim = range(rf_gridsearch$results$Accuracy) + c(-0.01, 0.0028),
+  ylim = range(rf_gridsearch$results$Accuracy) + c(-0.01, 0.01),
   panel = function(x, y, ...) {
     panel.xyplot(x, y, ...)
     panel.abline(h = best_oob_accuracy, col = "red", lwd = 1,lty = 2)
@@ -466,67 +475,23 @@ plot(
 )
 ```
 
-```{r}
-print(rf_gridsearch$bestTune) # remember we want the combination that yields the highest OOB accuracy
+```{r,best_rf_hp,echo=F,eval=TRUE}
+kable(rf_gridsearch$bestTune,caption='Best RF HyperParameters')
+# remember we want the combination that yields the highest OOB accuracy
 
-results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(Accuracy)
+
 ```
 
 **Boosting Model**
 
-Used non-zero features from the regularised model to speed up traning- we've established that the majority of these are not relevant anyway through CV
+Used non-zero features from the regularised model to speed up traning- we've established that the majority of these are not relevant anyway through CV and the
 
 Used features:
 
-```{r,echo=F,eval=F}
-
-library(Metrics)
-
+```{r,non_zero_coeff,echo=F,eval=F}
 non_zero_feats=best_coeff %>% filter(Coefficient!=0) %>% pull(Feature)
+non_zero_feats
 
-log_loss=function(data,lev = NULL, model = NULL){
-  
-  ytrue <- as.numeric(data$obs) # actuals
-  
-  # Force probability to numeric
-  yhat <- as.numeric(as.character(data$no))# predicted probabilities for positive class
-  
-  c(LogLoss = logLoss(ytrue, yhat)) # return logloss at each kfold iteration
-}
-```
-
-```{r,gbm_fit,eval=F,echo=F}
-
-# Use Cv
-
-# ctrl <- trainControl(method = 'cv', number = 10, verboseIter = T)
-# 
-# gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
-# 
-# gbm_lib <- gbm(full_booked_30 ~ .,data =gbm_feats, 
-#                distribution =  "bernoulli", #Applies squared error loss 
-#                n.trees = 1000, # Needs CV
-#                interaction.depth = 1, #$ Need CV
-#                shrinkage = 0.01, # Needs Cv
-#                bag.fraction = 1,
-#                weights_vector)   # to cater for the extreme data imbalance
-# 
-# yhat_gbm <- gbm_lib$fit
-# (mse_gbm <- mean((y - yhat_gbm)^2))
-```
-
-```{r}
-gbm_feats %>% filter(is.na(fully_booked_30))
-
-#log_loss(c(1,0,0),c(0.6,0.1,0.7))
-
-actual <- c(1, 1, 1, 0, 0, 0) #as.numeric(data$obs == "no") as.numeric(as.character(data$no))
-predicted <- c(0.9, 0.8, 0.4, 0.5, 0.3, 0.2)
-
-data=list(obs=actual,no=predicted)
-log_loss(data)
-
-#unique(gbm_feats$fully_booked_30)
 ```
 
 ```{r,gbm_fit,eval=F,echo=F}
@@ -544,6 +509,7 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
                               shrinkage =seq(0.01,0.10,0.03),
                               n.minobsinnode = 10)
 
+#CV for hyper parameter tuning
 n_cores <- parallel::detectCores() - 1  # leave one core free
 cl <- makeCluster(n_cores)
 clusterEvalQ(cl, library(Metrics))
@@ -552,7 +518,7 @@ clusterExport(cl, varlist = c("log_loss"))
 
 gbm_gridsearch <- train(fully_booked_30 ~ .,data =gbm_feats,
                               method = 'gbm',
-                              distribution = "bernoulli", # 
+                              distribution = "bernoulli", #
                               trControl = ctrl,
                               verbose = T,
                               tuneGrid = gbm_grid,
@@ -563,4 +529,106 @@ stopCluster(cl)
 registerDoSEQ()
 
 save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
+load('gbm_gridsearch.Rdata')
 ```
+
+```{r, gbm_load,eval=F,echo=F}
+gbm_gridsearch$results %>% 
+  mutate(
+    interaction.depth = factor(interaction.depth),
+    shrinkage = factor(shrinkage)
+  ) %>% 
+  group_by(interaction.depth, n.trees, shrinkage) %>% 
+  summarize(LogLoss = mean(LogLoss), .groups = "drop") %>% 
+  
+  ggplot(aes(x = n.trees,
+             y = LogLoss,
+             color = interaction.depth,
+             group = interaction.depth)) +
+  
+  geom_line() +
+  geom_point() +
+  
+  facet_wrap(~shrinkage,
+             labeller = labeller( shrinkage = function(x) paste("shrinkage:", x))
+             ) +
+  
+  labs(
+    title = "CV K-fold Log Loss vs Hyperparameters",
+    x = "# Boosting Iterations",
+    y = "CV Log Loss",
+    color = "Max Tree Depth"
+  ) +
+  
+  theme_minimal() +
+  
+  theme(
+    strip.text = element_text(size = 11),
+    legend.position = "top"
+  )
+```
+
+```{r gbm_hp_sel, eval=F, echo=T}
+#| message: false
+#| warning: false
+plot(gbm_gridsearch)
+```
+
+The best parameter is acquired at the hyperparametere combinatiations below:\
+
+```{r, best_com, eval=TRUE,echo=FALSE}
+kable(gbm_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
+        rename(`nr trees`=n.trees,`interaction depth`=interaction.depth)
+        , caption = 'GBM Best HyperParameter Combination')
+```
+
+```{r,gbm_all,eval=TRUE,echo=TRUE}
+# using all features comparability
+
+library(doParallel)
+library(foreach)
+set.seed(123)
+
+ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss)
+
+
+gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
+                              interaction.depth = seq(1, 10, 2),
+                              shrinkage =seq(0.01,0.10,0.03),
+                              n.minobsinnode = 10)
+
+#CV for hyper parameter tuning
+n_cores <- parallel::detectCores() - 1  # leave one core free
+cl <- makeCluster(n_cores)
+clusterEvalQ(cl, library(Metrics))
+registerDoParallel(cl)
+clusterExport(cl, varlist = c("log_loss"))
+
+gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
+                              method = 'gbm',
+                              distribution = "bernoulli", #
+                              trControl = ctrl,
+                              verbose = T,
+                              tuneGrid = gbm_grid,
+                              metric = "LogLoss",
+                              weights=weights_vector)
+
+stopCluster(cl)
+registerDoSEQ()
+
+
+save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
+load('gbm_all_gridsearch.Rdata')
+```
+
+```{r,eval=T,echo=F}
+plot(gbm_all_gridsearch )
+```
+
+```{r,gbm_all_best,echo=TRUE,eval=TRUE}
+kable(gbm_all_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
+        rename(`nr trees`=n.trees,`interaction depth`=interaction.depth)
+        , caption = 'GBM Best HyperParameter Combination')
+```
+
+# Question 3
