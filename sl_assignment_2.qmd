@@ -105,6 +105,7 @@ library(randomForest)
 library(gbm)
 library(Metrics)
 library(lattice)
+library(PRROC)
 ```
 
 You can add options to executable code like this
@@ -126,7 +127,7 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
                          room_type=factor(room_type,levels=unique(listings_data$room_type)),
                          instant_bookable=factor(instant_bookable,level=c('t','f')),
-                         fully_booked_30=factor(fully_booked_30,levels=c('yes','no')),
+                         fully_booked_30=factor(fully_booked_30,levels=c('no','yes')),
                          host_verifications=factor(case_when(host_verifications %in% c("['phone']") ~'phone_only',
                                                       host_verifications %in% c("['email', 'phone']" ,"['email', 'phone', 'work_email']", "['phone', 'work_email']") ~'phone_email',
                                                       host_verifications %in% c("['email']") ~'email_only'
@@ -284,6 +285,14 @@ log_loss=function(data,lev = NULL, model = NULL){
   c(LogLoss = logLoss(ytrue, yhat)) # return logloss at each kfold iteration
 }
 
+
+# secondary log_loss function for vanilla model
+
+log_loss_van=function(ytrue,yhat){
+
+  
+  c(LogLoss = logLoss(ytrue, yhat))}
+
 ```
 
 **Baseline Model Vanilla Logistic Regression**
@@ -292,8 +301,11 @@ log_loss=function(data,lev = NULL, model = NULL){
 #| message: false
 #| warning: false
 
-library(broom) #For nice tables
+library(broom) 
+library(boot)
 log_mod <- glm(fully_booked_30 ~ ., data = listings_data_cleaned_features, family = binomial)
+
+
 
 # log_mod |> 
 #   tidy() |>
@@ -305,11 +317,8 @@ bl_summ=tbl_regression(log_mod,
                        intercept = TRUE) %>%
   add_significance_stars() %>%
   add_glance_source_note(
-    include = c(nobs) #r.squared, adj.r.squared, 
+    include = c(nobs) #r.squared, adj.r.squared,
   ) %>%
-  # modify_source_note(
-  #   source_note = f_text
-  #) %>%
   modify_caption("**Baseline Model: Logistic Regression, All Features**")
 
 # exp(coef(log_mod)) |>
@@ -327,7 +336,7 @@ bl_summ=tbl_regression(log_mod,
 
 -   Significant Features:
 
-    -   Intercept ( which absorbes the omitted categorical variables: within a few hours, instant bookable=T)
+    -   Intercept ( which absorbed the omitted categorical variables: within a few hours, instant bookable=T)
 
     -   Latitude and Longitude,
 
@@ -347,7 +356,7 @@ bl_summ=tbl_regression(log_mod,
 
     -   Most interestingly the price!-\
 
-**L1 Regularazation**
+**L1 Regularization**
 
 ```{r regul, eval=T, echo=F}
 #| message: false
@@ -359,10 +368,21 @@ features_train=features[features!='fully_booked_30']
 x_train =data.matrix(listings_data_cleaned_features %>% dplyr::select(any_of(features_train)))
 y_train=listings_data_cleaned_features$fully_booked_30
 
+# Create folds for the data to keep track of CV ID
+# createFolds internally stratifies the sample to ensure propotions are representative for each fold
+
+folds = createFolds(y_train, k = 10) 
+foldid = rep(NA, length(y_train))
+for(i in seq_along(folds)){
+  foldid[folds[[i]]] <- i
+}
+
+
 # Fit the lasso and plot using plotmo
-# I think it looks wiered due to the imbalanced nature of the data
-logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',weights=weights_vector,type.measure="class")
-plot(logmod_l1)
+# Add weights paramenter to "rebalance " the data, rare misclassification of rare class is penalized more
+# Add foldid argument to keep track of CV folds for metrics later on
+logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',type.measure="class",keep=T,weights=weights_vector,foldid = foldid)
+plot(logmod_l1) #
 
 
 ```
@@ -409,38 +429,50 @@ Penalized Features:\
 
 **Random Forest**
 
-Using all
+Using all non_zero_coeff
 
 ```{r,rd,echo=F,eval=TRUE}
 library(caret)
-
-#CV for mtry,min_node size
-# rf=randomForest(fully_booked_30 ~ ., data = listings_data_cleaned_features,weights=weights_vector,importance=T)
-
-rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), # no. of features to randomly select for each tree
-                             splitrule = 'gini', #classification      
-                             min.node.size = seq(1,20,5) )# controls the smallest number of training samples required for a node to be eligeble for a split
+library(doParallel)
+library(foreach)
 
 
-# Sinnce method is OOB the log_loss summary function cannot be used
-# ctrl = trainControl(method = 'oob',number = 10, verboseIter = F)   
-# 
-# 
-# rf_gridsearch <- train(fully_booked_30 ~ .,
-#                              data = listings_data_cleaned_features,
-#                              method = 'ranger', # for random forest
-#                              num.trees = 250, # should this be included in the gridsearch?
-#                              importance = 'impurity',
-#                              trControl = ctrl,
-#                              tuneGrid = rf_grid,
-#                               weights=weights_vector) #to cater for an imbalanced dataset
+rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), 
+                             splitrule = c('gini','hellinger'),    
+                             min.node.size = c(5,15,20,25))
 
 
-write.csv(rf_gridsearch$results, "caret_rf_grid_results.csv")
-saveRDS(rf_gridsearch, file = "rf_gridsearch.rds")
+
+ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions ="final", classProbs = TRUE)
+
+n_cores <- parallel::detectCores() - 1  # leave one core free
+cl <- makeCluster(n_cores)
+clusterEvalQ(cl, library(caret))
+registerDoParallel(cl)
+#clusterExport(cl, varlist = c("log_loss"))
+
+rf_gridsearch <- train(fully_booked_30 ~ .,
+                             data = listings_data_cleaned_features,
+                             method = 'ranger', 
+                             num.trees = 250, 
+                             importance = 'impurity',
+                             trControl = ctrl,
+                             tuneGrid = rf_grid
+                             
+) 
+
+stopCluster(cl)
+registerDoSEQ()
+
+write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_final.csv")
+saveRDS(rf_gridsearch, file = "rf_gridsearch_cv_final.rds")
 
 
-rf_gridsearch =readRDS("rf_gridsearch.rds")
+rf_gridsearch =readRDS("rf_gridsearch_cv_final.rds")
+```
+
+```{r}
+
 ```
 
 ```{r,rd_res,echo=F,eval=T}
@@ -457,7 +489,7 @@ best_oob_min_node=results_df %>% filter(Accuracy==max(Accuracy)) %>% pull(min.no
 plot(
   rf_gridsearch,
   xlim = range(rf_gridsearch$results$mtry) + c(-1, 0.5),
-  ylim = range(rf_gridsearch$results$Accuracy) + c(-0.01, 0.01),
+  ylim = range(rf_gridsearch$results$Accuracy) + c(-0.001, 0.00),
   panel = function(x, y, ...) {
     panel.xyplot(x, y, ...)
     panel.abline(h = best_oob_accuracy, col = "red", lwd = 1,lty = 2)
@@ -484,7 +516,7 @@ kable(rf_gridsearch$bestTune,caption='Best RF HyperParameters')
 
 **Boosting Model**
 
-Used non-zero features from the regularised model to speed up traning- we've established that the majority of these are not relevant anyway through CV and the
+Used non-zero features from the regularized model to speed up training- we've established that the majority of these are not relevant anyway through CV and the
 
 Used features:
 
@@ -499,7 +531,7 @@ library(doParallel)
 library(foreach)
 set.seed(123)
 
-ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss)
+ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final",)
 
 gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
 
@@ -510,25 +542,25 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
                               n.minobsinnode = 10)
 
 #CV for hyper parameter tuning
-n_cores <- parallel::detectCores() - 1  # leave one core free
-cl <- makeCluster(n_cores)
-clusterEvalQ(cl, library(Metrics))
-registerDoParallel(cl)
-clusterExport(cl, varlist = c("log_loss"))
+# n_cores <- parallel::detectCores() - 1  # leave one core free
+# cl <- makeCluster(n_cores)
+# clusterEvalQ(cl, library(Metrics))
+# registerDoParallel(cl)
+# clusterExport(cl, varlist = c("log_loss"))
 
-gbm_gridsearch <- train(fully_booked_30 ~ .,data =gbm_feats,
-                              method = 'gbm',
-                              distribution = "bernoulli", #
-                              trControl = ctrl,
-                              verbose = T,
-                              tuneGrid = gbm_grid,
-                              metric = "LogLoss",
-                              weights=weights_vector)
+# gbm_gridsearch <- train(fully_booked_30 ~ .,data =gbm_feats,
+#                               method = 'gbm',
+#                               distribution = "bernoulli", #
+#                               trControl = ctrl,
+#                               verbose = T,
+#                               tuneGrid = gbm_grid,
+#                               metric = "LogLoss",
+#                               weights=weights_vector)
 
-stopCluster(cl)
-registerDoSEQ()
+# stopCluster(cl)
+# registerDoSEQ()
 
-save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
+#save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
 load('gbm_gridsearch.Rdata')
 ```
 
@@ -598,26 +630,26 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
                               n.minobsinnode = 10)
 
 #CV for hyper parameter tuning
-n_cores <- parallel::detectCores() - 1  # leave one core free
-cl <- makeCluster(n_cores)
-clusterEvalQ(cl, library(Metrics))
-registerDoParallel(cl)
-clusterExport(cl, varlist = c("log_loss"))
+#n_cores <- parallel::detectCores() - 1  # leave one core free
+#cl <- makeCluster(n_cores)
+#clusterEvalQ(cl, library(Metrics))
+#registerDoParallel(cl)
+#clusterExport(cl, varlist = c("log_loss"))
 
-gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
-                              method = 'gbm',
-                              distribution = "bernoulli", #
-                              trControl = ctrl,
-                              verbose = T,
-                              tuneGrid = gbm_grid,
-                              metric = "LogLoss",
-                              weights=weights_vector)
-
-stopCluster(cl)
-registerDoSEQ()
-
-
-save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
+# gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
+#                               method = 'gbm',
+#                               distribution = "bernoulli", #
+#                               trControl = ctrl,
+#                               verbose = T,
+#                               tuneGrid = gbm_grid,
+#                               metric = "LogLoss",
+#                               weights=weights_vector)
+# 
+# stopCluster(cl)
+# registerDoSEQ()
+# 
+# 
+# save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
 load('gbm_all_gridsearch.Rdata')
 ```
 
@@ -631,4 +663,129 @@ kable(gbm_all_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage
         , caption = 'GBM Best HyperParameter Combination')
 ```
 
-# Question 3
+# Question 3- Model Evaluation and Selection
+
+a\)
+
+```{r,tau,echo=FALSE,eval=T}
+tau= listings_data_cleaned_features %>% count(fully_booked_30) %>% mutate(
+,prop=n/sum(n)
+) %>% filter(fully_booked_30=='no') %>% pull(prop);tau
+
+```
+
+```{r,metrics_fuc,eval=T,echo=F}
+#library(ditto)
+library(ROCR)
+library(PRROC)
+
+my_metrics <- function(df,pred, labs){
+  p_labs <- ifelse(pred>=tau,1,0)       
+  t <- table(p_labs, labs)
+  acc <- mean(p_labs == labs) #accuracy
+  rec <- recall(t, '1')       #from caret
+  sp <- specificity(t, '0')   #ditto
+  pr <- precision(t, '1')     #ditto
+  f1 <- F_meas(t, '1')        #ditto
+  rocauc <- performance(prediction(pred, labs), 'auc')@y.values[[1]]   #from ROCR
+  prauc <- performance(prediction(pred, labs), 'aucpr')@y.values[[1]] 
+
+    # Augment code with logloss and AUPRC 
+  log_loss_=logLoss(labs,pred)
+  fg <- probs[df$fully_booked_30 == 'no']
+  bg <- probs[df$fully_booked_30 == 'yes']
+  pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = TRUE)
+  prauc=pr$auc.integral
+  
+  #from ROCR
+  metrics <- c('Log Loss' = log_loss_,
+               'AUPRC'=prauc,
+               'Recall' = rec,
+               'Specificity' = sp,
+               'Precision' = pr,
+               'F1' = f1,
+               'Accuracy' = acc)
+  return(metrics)
+}
+```
+
+```{r,cv_l1_log_pred,echo=F,eval=T}
+
+val_list=vector(mode='list',length=10) # list containing validation indicies
+for (k in  1:10){
+  # get indicies that equal the validation fold in question
+  obs_id=which(logmod_l1$foldid==k) 
+  val_list[[k]]=obs_id
+}
+
+ 
+# Extract actual validation data for each fold, calculate and store the metric
+
+cv_log_losses=c()
+cv_recalls=c()
+
+for (i in 1:10){
+  val_data=listings_data_cleaned_features[val_list[[i]],]
+  new_x=data.matrix(val_data[,features_train])
+  cv_ytrue=as.numeric(val_data$fully_booked_30)-1
+  #  outputs probabilities for the positive class
+  cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
+  
+  # get log loss 
+  cv_log_losses=c(cv_log_losses,logLoss(cv_ytrue,cv_pred))
+  p_labs <- ifelse(cv_pred>=tau,1,0)
+  t <- table(p_labs, cv_ytrue)
+  acc <- mean(p_labs == cv_ytrue)
+  rec <- recall(t, '1')
+  cv_recalls=c(cv_recalls,rec)
+   # Get AUPRC
+
+  
+  
+}
+
+overall_cv_log_l1=mean(cv_log_losses)
+overall_cv_log_l1 # now do this for all metrics :()
+
+
+val_data=listings_data_cleaned_features[val_list[[1]],]
+new_x=data.matrix(val_data[,features_train])
+cv_ytrue=as.numeric(val_data$fully_booked_30)-1
+cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
+p_labs <- ifelse(cv_pred>=tau,1,0)
+t <- table(p_labs, cv_ytrue)
+acc <- mean(p_labs == cv_ytrue)
+#rec <- recall(t, '1')
+
+TP=sum(p_labs == 1 & cv_ytrue == 1)
+
+FN=sum(p_labs == 0 & cv_ytrue == 1)
+
+recall=TP / (TP + FN)
+
+```
+
+```{r,cv_rf_pred,echo=TRUE,eval=F}
+# get preictions
+rf_yhat=rf_gridsearch$pred %>% select(pred) %>% pull()
+rf_row_ind=rf_gridsearch$pred %>% select(rowIndex) %>% pull(rowIndex)
+rf_obs=listings_data_cleaned_features[rf_row_ind,]
+
+
+
+# get prob predictions, will do later
+rf_cv_pred=predict(rf_gridsearch,newdata=rf_obs,type = "prob")
+rf_cv_pred=rf_cv_pred %>% mutate(class= if_else(no>=tau,1,0))
+
+
+# rf_ytru
+rf_ytru=listings_data_cleaned_features[rf_row_ind,]$fully_booked_30
+
+
+
+```
+
+```{r,metrics}
+
+
+```
