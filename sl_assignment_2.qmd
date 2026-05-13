@@ -106,6 +106,7 @@ library(gbm)
 library(Metrics)
 library(lattice)
 library(PRROC)
+library(yardstick)
 ```
 
 ```{r, data_load, eval=T,echo=F}
@@ -412,7 +413,6 @@ plot(logmod_l1) #
 From the above, the best number of non-zero coefficients equals 9 (using 1SE discrimination). This is used to identify the zero-coefficient features.
 
 ```{r}
-predict(logmod_l1,newx=x_train,type='response',s='lambda.min')
 ```
 
 ```{r,zero_coeff,echo=FALSE,eval=T}
@@ -457,6 +457,14 @@ Penalized Features:\
 
 Using all non_zero_coeff
 
+```{r}
+
+#Weights for the outcome classes (in order of the factor levels) # in the splitting rule
+
+class.weights = c(class_ratio, 1) # no=1, yes=0
+class.weights
+```
+
 ```{r,rd,echo=F,eval=TRUE}
 library(caret)
 library(doParallel)
@@ -471,33 +479,35 @@ rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1),
 
 ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions ="final", classProbs = TRUE)
 
-# n_cores <- parallel::detectCores() - 1  # leave one core free
-# cl <- makeCluster(n_cores)
-# clusterEvalQ(cl, library(caret))
-# registerDoParallel(cl)
-#clusterExport(cl, varlist = c("log_loss"))
+n_cores <- parallel::detectCores() - 1  # leave one core free
+cl <- makeCluster(n_cores)
+clusterEvalQ(cl, library(caret))
+registerDoParallel(cl)
+clusterExport(cl, varlist = c("log_loss"))
 
-# rf_gridsearch <- train(fully_booked_30 ~ .,
-#                              data = listings_data_cleaned_features,
-#                              method = 'ranger', 
-#                              num.trees = 250, 
-#                              importance = 'impurity',
-#                              trControl = ctrl,
-#                              tuneGrid = rf_grid
-#                              
-# ) 
+rf_gridsearch <- train(fully_booked_30 ~ .,
+                             data = listings_data_cleaned_features,
+                             method = 'ranger',
+                             num.trees = 250,
+                             importance = 'impurity',
+                             trControl = ctrl,
+                             tuneGrid = rf_grid,
+                             class.weights=class.weights
+
+)
 # 
-# stopCluster(cl)
-# registerDoSEQ()
+stopCluster(cl)
+registerDoSEQ()
 
-# write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_final.csv")
-# saveRDS(rf_gridsearch, file = "rf_gridsearch_cv_final.rds")
+write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
+saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
 # 
 
-rf_gridsearch =readRDS("rf_gridsearch_cv_final.rds")
+rf_gridsearch =readRDS("caret_rf_grid_results_cv_weights.rds")
 ```
 
 ```{r}
+
 
 ```
 
