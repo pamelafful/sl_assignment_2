@@ -108,8 +108,6 @@ library(lattice)
 library(PRROC)
 ```
 
-You can add options to executable code like this
-
 ```{r, data_load, eval=T,echo=F}
 
 listings_data=read.csv('listings.csv')
@@ -445,28 +443,28 @@ rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1),
 
 ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions ="final", classProbs = TRUE)
 
-n_cores <- parallel::detectCores() - 1  # leave one core free
-cl <- makeCluster(n_cores)
-clusterEvalQ(cl, library(caret))
-registerDoParallel(cl)
+# n_cores <- parallel::detectCores() - 1  # leave one core free
+# cl <- makeCluster(n_cores)
+# clusterEvalQ(cl, library(caret))
+# registerDoParallel(cl)
 #clusterExport(cl, varlist = c("log_loss"))
 
-rf_gridsearch <- train(fully_booked_30 ~ .,
-                             data = listings_data_cleaned_features,
-                             method = 'ranger', 
-                             num.trees = 250, 
-                             importance = 'impurity',
-                             trControl = ctrl,
-                             tuneGrid = rf_grid
-                             
-) 
+# rf_gridsearch <- train(fully_booked_30 ~ .,
+#                              data = listings_data_cleaned_features,
+#                              method = 'ranger', 
+#                              num.trees = 250, 
+#                              importance = 'impurity',
+#                              trControl = ctrl,
+#                              tuneGrid = rf_grid
+#                              
+# ) 
+# 
+# stopCluster(cl)
+# registerDoSEQ()
 
-stopCluster(cl)
-registerDoSEQ()
-
-write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_final.csv")
-saveRDS(rf_gridsearch, file = "rf_gridsearch_cv_final.rds")
-
+# write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_final.csv")
+# saveRDS(rf_gridsearch, file = "rf_gridsearch_cv_final.rds")
+# 
 
 rf_gridsearch =readRDS("rf_gridsearch_cv_final.rds")
 ```
@@ -632,26 +630,26 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
                               n.minobsinnode = 10)
 
 #CV for hyper parameter tuning
-n_cores <- parallel::detectCores() - 1  # leave one core free
-cl <- makeCluster(n_cores)
-clusterEvalQ(cl, library(Metrics))
-registerDoParallel(cl)
-clusterExport(cl, varlist = c("log_loss"))
+# n_cores <- parallel::detectCores() - 1  # leave one core free
+# cl <- makeCluster(n_cores)
+# clusterEvalQ(cl, library(Metrics))
+# registerDoParallel(cl)
+# clusterExport(cl, varlist = c("log_loss"))
+# 
+# gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
+#                               method = 'gbm',
+#                               distribution = "bernoulli", #
+#                               trControl = ctrl,
+#                               verbose = T,
+#                               tuneGrid = gbm_grid,
+#                               metric = "LogLoss",
+#                               weights=weights_vector)
+# 
+# stopCluster(cl)
+# registerDoSEQ()
 
-gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
-                              method = 'gbm',
-                              distribution = "bernoulli", #
-                              trControl = ctrl,
-                              verbose = T,
-                              tuneGrid = gbm_grid,
-                              metric = "LogLoss",
-                              weights=weights_vector)
 
-stopCluster(cl)
-registerDoSEQ()
-
-
-save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
+#save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
 load('gbm_all_gridsearch.Rdata')
 ```
 
@@ -680,36 +678,88 @@ tau= listings_data_cleaned_features %>% count(fully_booked_30) %>% mutate(
 #library(ditto)
 library(ROCR)
 library(PRROC)
+library(yardstick)
 
-my_metrics <- function(df,pred, labs){
-  p_labs <- ifelse(pred>=tau,1,0)       
-  t <- table(p_labs, labs)
-  acc <- mean(p_labs == labs) #accuracy
-  rec <- recall(t, '1')       #from caret
-  sp <- specificity(t, '0')   #ditto
-  pr <- precision(t, '1')     #ditto
-  f1 <- F_meas(t, '1')        #ditto
-  rocauc <- performance(prediction(pred, labs), 'auc')@y.values[[1]]   #from ROCR
-  prauc <- performance(prediction(pred, labs), 'aucpr')@y.values[[1]] 
-
-    # Augment code with logloss and AUPRC 
-  log_loss_=logLoss(labs,pred)
-  fg <- probs[df$fully_booked_30 == 'no']
-  bg <- probs[df$fully_booked_30 == 'yes']
-  pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = TRUE)
-  prauc=pr$auc.integral
+my_metrics <- function(df, pred, labs, tau = 0.5) {
   
-  #from ROCR
-  metrics <- c('Log Loss' = log_loss_,
-               'AUPRC'=prauc,
-               'Recall' = rec,
-               'Specificity' = sp,
-               'Precision' = pr,
-               'F1' = f1,
-               'Accuracy' = acc)
+  # Ensure numeric 0/1
+  labs <- as.numeric(as.character(labs))
+  
+  # Build evaluation data
+  df_eval <- data.frame(
+    truth = factor(labs, levels = c(0, 1)),
+    estimate = factor(ifelse(pred >= tau, 1, 0), levels = c(0, 1)),
+    .pred_1 = pred
+  )
+  
+  # Classification metrics
+  acc  <- yardstick::accuracy(df_eval, truth, estimate)$.estimate
+  rec  <- yardstick::recall(df_eval, truth, estimate)$.estimate
+  sp   <- yardstick::spec(df_eval, truth, estimate)$.estimate
+  prec <- yardstick::precision(df_eval, truth, estimate)$.estimate
+  f1   <- yardstick::f_meas(df_eval, truth, estimate)$.estimate
+  
+  # Probabilistic metrics
+  rocauc <- roc_auc(df_eval, truth, .pred_1)$.estimate
+  prauc  <- pr_auc(df_eval, truth, .pred_1)$.estimate
+  log_loss_ <- mn_log_loss(df_eval, truth, .pred_1)$.estimate
+  
+  # Return named vector
+  metrics <- c(
+    "Log Loss"   = log_loss_,
+    "AUPRC"      = prauc,
+    "Recall"     = rec,
+    "Specificity"= sp,
+    "Precision"  = prec,
+    "F1"         = f1,
+    "Accuracy"   = acc,
+    "ROC AUC"    = rocauc
+  )
+  
   return(metrics)
 }
+
+
+
+# Get predictions and metrics across all CV validation folds
+
+
+evaluate_on_validations <- function(val_list, model, target_col, tau = tau) {
+  
+  all_metrics <- lapply(val_list, function(df) {
+    
+    # Extract labels
+    labs <- df[[target_col]] # fully_booked_30 
+    
+    # Build feature matrix (exclude target)
+    new_x <- as.matrix(df[, setdiff(names(df), target_col)])
+    
+    # Get predicted probabilities
+    pred <- predict(
+      model,
+      newx = new_x,
+      s = "lambda.1se",
+      type = "response"
+    )[, 1]
+    
+    # Compute metrics
+    m <- my_metrics(df, pred, labs, tau)
+    
+    return(m)
+  })
+  
+  # Combine results
+  metrics_matrix <- do.call(rbind, all_metrics)
+  
+  # Average across validation sets
+  mean_metrics <- colMeans(metrics_matrix, na.rm = TRUE)
+  
+  return(mean_metrics)
+}
+
 ```
+
+\_
 
 ```{r,cv_l1_log_pred,echo=F,eval=T}
 
@@ -718,52 +768,75 @@ for (k in  1:10){
   # get indicies that equal the validation fold in question
   obs_id=which(logmod_l1$foldid==k) 
   val_list[[k]]=obs_id
+  
+  
+  
 }
 
+
+# Get validation data sets
+
+
+n <- 10 # nr K folds
+val_data_sets <- vector("list", n)
+
+for (i in 1:n){
+  val_data=listings_data_cleaned_features[val_list[[i]],] # get the actual observations from the fold ids
+  val_data_sets[[i]]=val_data
+  
+}
+
+(val_list, model, target_col, tau = tau)
+
+evaluate_on_validations(val_data_sets,logmod_l1,"fully_booked_30",tau = tau )
  
-# Extract actual validation data for each fold, calculate and store the metric
-
-cv_log_losses=c()
-cv_recalls=c()
-
-for (i in 1:10){
-  val_data=listings_data_cleaned_features[val_list[[i]],]
-  new_x=data.matrix(val_data[,features_train])
-  cv_ytrue=as.numeric(val_data$fully_booked_30)-1
-  #  outputs probabilities for the positive class
-  cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
-  
-  # get log loss 
-  cv_log_losses=c(cv_log_losses,logLoss(cv_ytrue,cv_pred))
-  p_labs <- ifelse(cv_pred>=tau,1,0)
-  t <- table(p_labs, cv_ytrue)
-  acc <- mean(p_labs == cv_ytrue)
-  rec <- recall(t, '1')
-  cv_recalls=c(cv_recalls,rec)
-   # Get AUPRC
-
-  
-  
-}
-
-overall_cv_log_l1=mean(cv_log_losses)
-overall_cv_log_l1 # now do this for all metrics :()
-
-
-val_data=listings_data_cleaned_features[val_list[[1]],]
-new_x=data.matrix(val_data[,features_train])
-cv_ytrue=as.numeric(val_data$fully_booked_30)-1
-cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
-p_labs <- ifelse(cv_pred>=tau,1,0)
-t <- table(p_labs, cv_ytrue)
-acc <- mean(p_labs == cv_ytrue)
-#rec <- recall(t, '1')
-
-TP=sum(p_labs == 1 & cv_ytrue == 1)
-
-FN=sum(p_labs == 0 & cv_ytrue == 1)
-
-recall=TP / (TP + FN)
+# # Extract actual validation data for each fold, calculate and store the metric
+# 
+# cv_log_losses=c()
+# cv_recalls=c()
+# 
+# for (i in 1:10){
+#   val_data=listings_data_cleaned_features[val_list[[i]],]
+#   new_x=data.matrix(val_data[,features_train])
+#   cv_ytrue=as.numeric(val_data$fully_booked_30)-1
+#   #  outputs probabilities for the positive class
+#   cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
+#   
+#   # get log loss 
+#   cv_log_losses=c(cv_log_losses,logLoss(cv_ytrue,cv_pred))
+#   p_labs <- ifelse(cv_pred>=tau,1,0)
+#   t <- table(p_labs, cv_ytrue)
+#   acc <- mean(p_labs == cv_ytrue)
+#   rec <- recall(t, '1')
+#   cv_recalls=c(cv_recalls,rec)
+#    # Get AUPRC
+# 
+#   
+#   
+# }
+# 
+# overall_cv_log_l1=mean(cv_log_losses)
+# overall_cv_log_l1 # now do this for all metrics :()
+# 
+# 
+# val_data=listings_data_cleaned_features[val_list[[1]],]
+# new_x=data.matrix(val_data[,features_train])
+# cv_ytrue=as.numeric(val_data$fully_booked_30)-1
+# cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
+# p_labs <- ifelse(cv_pred>=tau,1,0)
+# t <- table(p_labs, cv_ytrue)
+# acc <- mean(p_labs == cv_ytrue)
+# #rec <- recall(t, '1')
+# 
+# TP=sum(p_labs == 1 & cv_ytrue == 1)
+# 
+# FN=sum(p_labs == 0 & cv_ytrue == 1)
+# 
+# recall=TP / (TP + FN)
+# 
+# 
+# 
+# 
 
 ```
 
