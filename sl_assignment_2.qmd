@@ -461,6 +461,7 @@ Using all non_zero_coeff
 
 #Weights for the outcome classes (in order of the factor levels) # in the splitting rule
 
+class_ratio=class_ratio %>% pull(n)
 class.weights = c(class_ratio, 1) # no=1, yes=0
 class.weights
 ```
@@ -479,27 +480,27 @@ rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1),
 
 ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions ="final", classProbs = TRUE)
 
-n_cores <- parallel::detectCores() - 1  # leave one core free
-cl <- makeCluster(n_cores)
-clusterEvalQ(cl, library(caret))
-registerDoParallel(cl)
-clusterExport(cl, varlist = c("log_loss"))
-
-rf_gridsearch <- train(fully_booked_30 ~ .,
-                             data = listings_data_cleaned_features,
-                             method = 'ranger',
-                             num.trees = 250,
-                             importance = 'impurity',
-                             trControl = ctrl,
-                             tuneGrid = rf_grid,
-                             class.weights=class.weights
-
-)
+# n_cores <- parallel::detectCores() - 1  # leave one core free
+# cl <- makeCluster(n_cores)
+# clusterEvalQ(cl, library(caret))
+# registerDoParallel(cl)
+# #clusterExport(cl, varlist = c("log_loss"))
 # 
-stopCluster(cl)
-registerDoSEQ()
+# rf_gridsearch <- train(fully_booked_30 ~ .,
+#                              data = listings_data_cleaned_features,
+#                              method = 'ranger',
+#                              num.trees = 250,
+#                              importance = 'impurity',
+#                              trControl = ctrl,
+#                              tuneGrid = rf_grid,
+#                              class.weights=class.weights
+# 
+# )
+# # 
+# stopCluster(cl)
+# registerDoSEQ()
 
-write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
+#write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
 saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
 # 
 
@@ -567,23 +568,23 @@ library(doParallel)
 library(foreach)
 set.seed(123)
 
-ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
+# ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
+# 
+# gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
 
-gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
 
-
-gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
-                              interaction.depth = seq(1, 10, 2),
-                              shrinkage =seq(0.01,0.10,0.03),
-                              n.minobsinnode = 10)
-
-#CV for hyper parameter tuning
+# gbm_grid <- expand.grid(n.trees = c(1000,2500,3000),
+#                               interaction.depth = seq(1, 10, 2),
+#                               shrinkage =c(0.01,0.02,0.04),
+#                               n.minobsinnode = 10)
+# 
+# CV for hyper parameter tuning
 # n_cores <- parallel::detectCores() - 1  # leave one core free
 # cl <- makeCluster(n_cores)
 # clusterEvalQ(cl, library(Metrics))
 # registerDoParallel(cl)
 # clusterExport(cl, varlist = c("log_loss"))
-
+# 
 # gbm_gridsearch <- train(fully_booked_30 ~ .,data =gbm_feats,
 #                               method = 'gbm',
 #                               distribution = "bernoulli", #
@@ -592,12 +593,12 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
 #                               tuneGrid = gbm_grid,
 #                               metric = "LogLoss",
 #                               weights=weights_vector)
-
+# 
 # stopCluster(cl)
 # registerDoSEQ()
-
-#save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
-load('gbm_gridsearch.Rdata')
+# 
+# save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
+# load('gbm_gridsearch_2.Rdata')
 ```
 
 ```{r, gbm_load,eval=F,echo=F}
@@ -650,6 +651,13 @@ kable(gbm_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>
         , caption = 'GBM Best HyperParameter Combination')
 ```
 
+```{r}
+load('gbm_gridsearch.Rdata')
+
+sel_feat=names(gbm_gridsearch$trainingData)
+train_sel_feat=sel_feat[sel_feat!='.outcome']
+```
+
 ```{r,gbm_all,eval=TRUE,echo=TRUE}
 # using all features comparability
 
@@ -688,15 +696,16 @@ gbm_grid <- expand.grid(n.trees = c(500,1000,1500),
 
 
 #save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
-load('gbm_all_gridsearch.Rdata')
+saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+#load('gbm_all_gridsearch.Rdata')
 ```
 
 ```{r,eval=T,echo=F}
-plot(gbm_all_gridsearch )
+plot(gbm_gridsearch )
 ```
 
 ```{r,gbm_all_best,echo=TRUE,eval=TRUE}
-kable(gbm_all_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
+kable(gbm_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
         rename(`nr trees`=n.trees,`interaction depth`=interaction.depth)
         , caption = 'GBM Best HyperParameter Combination')
 ```
@@ -808,11 +817,11 @@ evaluate_on_validations <- function(val_list, model, target_col, tau = tau) {
 
 # CV metrics for L1 logistic regression
 
-val_list=vector(mode='list',length=10) # list containing validation indicies
+log_l1_val_list=vector(mode='list',length=10) # list containing validation indicies
 for (k in  1:10){
   # get indicies that equal the validation fold in question
   obs_id=which(logmod_l1$foldid==k) 
-  val_list[[k]]=obs_id
+  log_l1_val_list[[k]]=obs_id
   
   
   
@@ -823,11 +832,11 @@ for (k in  1:10){
 
 
 n <- 10 # nr K folds
-val_data_sets <- vector("list", n)
+log_val_data_sets <- vector("list", n)
 
 for (i in 1:n){
   val_data=listings_data_cleaned_features[val_list[[i]],] # get the actual observations from the fold ids
-  val_data_sets[[i]]=val_data
+  log_val_data_sets[[i]]=val_data
   
 }
 
@@ -844,8 +853,8 @@ n=10 # folds
 
 for(k in 1:n){
 
-labs <- val_data_sets[[k]][["fully_booked_30"]]
-df=val_data_sets[[k]]
+labs <- log_val_data_sets[[k]][["fully_booked_30"]]
+df=log_val_data_sets[[k]]
 new_x <- model.matrix(
     as.formula(paste("~", paste(setdiff(names(df), 'fully_booked_30'), collapse = "+"))),
    data =df
@@ -870,7 +879,7 @@ df_eval <- data.frame(
   )
 
  
- log_loss_ <- mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ log_loss_ <- mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
  rec  <- yardstick::recall(df_eval, truth, estimate)$.estimate
  sp   <- yardstick::spec(df_eval, truth, estimate)$.estimate
@@ -954,8 +963,8 @@ n=10 # folds
 
 for(k in 1:n){
 
-labs <- rf_val_data_sets[[k]][["fully_booked_30"]]
-df=rf_val_data_sets[[k]]
+labels <- rf_val_data_sets[[1]][["fully_booked_30"]]
+df=rf_val_data_sets[[1]]
 
 
 
@@ -964,18 +973,20 @@ new_data=df %>% select(any_of(features_train))
 pred=predict(rf_gridsearch,newdata=
 new_data,type = "prob")[,'no']
 
-labs <- if_else(labs=='no',1,0)
+labs <- if_else(labels=='no',1,0)
 
 
 
 df_eval <- data.frame(
     truth = factor(labs, levels = c(0, 1)),
+    labels=labels,
     estimate = factor(ifelse(pred >= tau, 1, 0), levels = c(0, 1)),
     .pred_1 = pred
   )
 
+levels(df_eval$truth)
  
- log_loss_ = mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ log_loss_ = mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  acc  = yardstick::accuracy(df_eval, truth, estimate)$.estimate
  prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
  rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
@@ -1010,12 +1021,13 @@ cv_rf_results
 
 ```
 
-```{r gbm_cv,echo=F,eval=T}}
+```{r gbm_cv_all,echo=F,eval=T}}
 
 # Get predictions
-
-
-
+#train_sel_feat
+#features_train
+#train_sel_feat
+  
 x_train=listings_data_cleaned_features %>% select(any_of(features_train))
 
 train_indices =gbm_all_gridsearch$control$index
@@ -1051,14 +1063,14 @@ n=10 # folds
 
 for(k in 1:n){
 
-labs <-gbm_val_data_sets[[k]][["fully_booked_30"]]
-df=gbm_val_data_sets[[k]]
+labs <-gbm_val_data_sets[[1]][["fully_booked_30"]]
+df=gbm_val_data_sets[[1]]
 
 
 
-new_data=df %>% select(any_of(features_train))
+new_data=df %>% select(any_of(features_train))#
 
-pred=predict(gbm_all_gridsearch,newdata=
+pred=predict(gbm_all_gridsearch,newdata= #gbm_all_gridsearch
 new_data,type = "prob")[,'no']
 
 labs <- labs <- ifelse(labs == "no",1,0)
@@ -1071,7 +1083,7 @@ df_eval <- data.frame(
   )
 
  
- log_loss_ = mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ log_loss_ = mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
  acc= yardstick::accuracy(df_eval, truth, estimate)$.estimate
  rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
@@ -1185,12 +1197,16 @@ library(MLeval)
 # points(compar[1,2] ~ compar[2,2], col = 'red', pch = 16)
 # text(compar[1,2] ~ compar[2,2], labels = 0.2, pos = 4)
 
-res_rf <- evalm(rf_gridsearch)
+res_rf <- evalm(rf_gridsearch)$roc
 
 
-res_gbm <- evalm(gbm_all_gridsearch)
+res_gbm <- evalm(gbm_all_gridsearch)$roc
 
 
 
 # 
+```
+
+```{r}
+# Answer rest of q3
 ```
