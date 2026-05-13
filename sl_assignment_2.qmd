@@ -125,7 +125,7 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
                          room_type=factor(room_type,levels=unique(listings_data$room_type)),
                          instant_bookable=factor(instant_bookable,level=c('t','f')),
-                         fully_booked_30=factor(fully_booked_30,levels=c('no','yes')),
+                         fully_booked_30=factor(fully_booked_30, levels=c('yes','no')),
                          host_verifications=factor(case_when(host_verifications %in% c("['phone']") ~'phone_only',
                                                       host_verifications %in% c("['email', 'phone']" ,"['email', 'phone', 'work_email']", "['phone', 'work_email']") ~'phone_email',
                                                       host_verifications %in% c("['email']") ~'email_only'
@@ -134,6 +134,8 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          
                          
                          )
+
+
 ```
 
 ```{r,eda,eval=T,echo=F}
@@ -150,7 +152,7 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
 
 #View(za_admin2 %>% filter(name=='Western Cape'))
 
-cols <- ifelse(listings_data_cleaned$fully_booked_30 == 1, "red", "blue")
+cols <- ifelse(listings_data_cleaned$fully_booked_30 == 'no', "red", "blue")
 
 # plot(st_geometry(cape_town ),
 #      col = NA,
@@ -168,7 +170,7 @@ plot(listings_data_cleaned$longitude,
        col = cols)
 
 legend("topright",
-       legend = c("Not Fully Booked", "Fully Booked"),
+       legend = c("Fully Booked", "Not Fully Booked"),
        col = c("blue", "red"),
        pch = 16,
        bty = "n",
@@ -217,6 +219,21 @@ ggplot(aes(x=fully_booked_30,y=n_cnt, fill=host_since_intervals))+
 Use a novel decision tree to gauge which features could be important for determining the response variable. Since we have an imbalanced class, a weighted decision tree is used:\
 <https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>\
 
+```{r,w_vec,eval=T,echo=FALSE}
+
+
+cnt_no_obs=listings_data_cleaned %>% filter(fully_booked_30=='no') %>% count()
+cnt_yes_obs=listings_data_cleaned %>% filter(fully_booked_30=='yes') %>% count()
+class_ratio=cnt_no_obs/cnt_yes_obs
+
+weights_vector=ifelse(listings_data_cleaned$fully_booked_30=='no',class_ratio,1)
+
+weights_vector=unlist(weights_vector)
+
+
+listings_data_cleaned$fully_booked_30[1:5];
+```
+
 ```{r get_feat, eval=T, echo=F}
 #| message: false
 #| warning: false
@@ -227,16 +244,16 @@ Use a novel decision tree to gauge which features could be important for determi
 
 # ratio= #obs=1:#obs=yes 
 library(rpart)
-cnt_no_obs=listings_data_cleaned %>% filter(fully_booked_30=='no') %>% count()
-cnt_yes_obs=listings_data_cleaned %>% filter(fully_booked_30=='yes') %>% count()
-class_ratio=cnt_no_obs/cnt_yes_obs
+# cnt_no_obs=listings_data_cleaned %>% filter(fully_booked_30=='no') %>% count()
+# cnt_yes_obs=listings_data_cleaned %>% filter(fully_booked_30=='yes') %>% count()
+# class_ratio=cnt_no_obs/cnt_yes_obs
 
-weights_vector=ifelse(listings_data_cleaned$fully_booked_30=='yes',class_ratio,1)
-
-weights_vector=unlist(weights_vector)
+# weights_vector=ifelse(listings_data_cleaned$fully_booked_30=='yes',class_ratio,1)
+# 
+# weights_vector=unlist(weights_vector)
 
 features_all=names(listings_data_cleaned)
-features=features_all[! features_all %in% c('host_since','host_id')]
+features=features_all[! features_all %in% c('host_since','host_id', 'fully_booked_30_lab')]
 
 listings_data_cleaned_features=listings_data_cleaned %>% dplyr::select(any_of(features))
 
@@ -275,7 +292,7 @@ Define the Log Loss Function
 ```{r,logloss,eval=T,echo=F}
 log_loss=function(data,lev = NULL, model = NULL){
   
-  ytrue <- as.numeric(data$obs)-1 # actuals, turn back to "numbers"
+  ytrue <- ytrue <- ifelse(data$obs == "no", 1, 0) # actuals, turn back to "numbers"
   
   # Force probability to numeric
   yhat <- as.numeric(as.character(data$no))# predicted probabilities for positive class
@@ -362,9 +379,16 @@ bl_summ=tbl_regression(log_mod,
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
-features_train=features[features!='fully_booked_30']
-x_train =data.matrix(listings_data_cleaned_features %>% dplyr::select(any_of(features_train)))
+features_train=features[features!='fully_booked_30'] 
+x_train_df =listings_data_cleaned_features %>% dplyr::select(any_of(features_train))
 y_train=listings_data_cleaned_features$fully_booked_30
+
+
+
+x_train <- model.matrix(
+  as.formula(paste("~", paste(setdiff(names(x_train_df), 'fully_booked_30'), collapse = "+"))),
+  data =x_train_df 
+)[, -1]
 
 # Create folds for the data to keep track of CV ID
 # createFolds internally stratifies the sample to ensure propotions are representative for each fold
@@ -379,13 +403,17 @@ for(i in seq_along(folds)){
 # Fit the lasso and plot using plotmo
 # Add weights paramenter to "rebalance " the data, rare misclassification of rare class is penalized more
 # Add foldid argument to keep track of CV folds for metrics later on
-logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',type.measure="class",keep=T,weights=weights_vector,foldid = foldid)
+logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',type.measure="auc",keep=T,foldid = foldid)
 plot(logmod_l1) #
 
 
 ```
 
 From the above, the best number of non-zero coefficients equals 9 (using 1SE discrimination). This is used to identify the zero-coefficient features.
+
+```{r}
+predict(logmod_l1,newx=x_train,type='response',s='lambda.min')
+```
 
 ```{r,zero_coeff,echo=FALSE,eval=T}
 #coef(logmod_l1, s = 2.5)
@@ -436,8 +464,8 @@ library(foreach)
 
 
 rf_grid = expand.grid(mtry = 2:(ncol(listings_data_cleaned_features) - 1), 
-                             splitrule = c('gini','hellinger'),    
-                             min.node.size = c(5,15,20,25))
+                             splitrule = c('gini','hellinger'), # imbalanced data   
+                             min.node.size = c(1,5,10))
 
 
 
@@ -624,9 +652,9 @@ set.seed(123)
 ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
 
 
-gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
-                              interaction.depth = seq(1, 10, 2),
-                              shrinkage =seq(0.01,0.10,0.03),
+gbm_grid <- expand.grid(n.trees = c(500,1000,1500),
+                              interaction.depth = seq(1, 5, 1),
+                              shrinkage =c(0.005, 0.01),
                               n.minobsinnode = 10)
 
 #CV for hyper parameter tuning
@@ -680,10 +708,10 @@ library(ROCR)
 library(PRROC)
 library(yardstick)
 
-my_metrics <- function(df, pred, labs, tau = 0.5) {
+my_metrics <- function(df, pred, labs, tau = tau) {
   
   # Ensure numeric 0/1
-  labs <- as.numeric(as.character(labs))
+  labs <- as.numeric(labs)-1#as.numeric(as.character(labs))
   
   # Build evaluation data
   df_eval <- data.frame(
@@ -732,7 +760,12 @@ evaluate_on_validations <- function(val_list, model, target_col, tau = tau) {
     labs <- df[[target_col]] # fully_booked_30 
     
     # Build feature matrix (exclude target)
-    new_x <- as.matrix(df[, setdiff(names(df), target_col)])
+   # new_x <- as.matrix(df[, setdiff(names(df), target_col)])
+    
+    new_x <- model.matrix(
+    as.formula(paste("~", paste(setdiff(names(df), 'fully_booked_30'), collapse = "+"))),
+   data =df
+  )[, -1]
     
     # Get predicted probabilities
     pred <- predict(
@@ -763,6 +796,8 @@ evaluate_on_validations <- function(val_list, model, target_col, tau = tau) {
 
 ```{r,cv_l1_log_pred,echo=F,eval=T}
 
+# CV metrics for L1 logistic regression
+
 val_list=vector(mode='list',length=10) # list containing validation indicies
 for (k in  1:10){
   # get indicies that equal the validation fold in question
@@ -786,81 +821,366 @@ for (i in 1:n){
   
 }
 
-(val_list, model, target_col, tau = tau)
 
-evaluate_on_validations(val_data_sets,logmod_l1,"fully_booked_30",tau = tau )
+log_l1_logloss_scores=c()
+log_l1_prauc_scores=c()
+log_l1_acc_scores=c()
+log_l1_rec_scores=c()
+log_l1_sp_scores=c()
+log_l1_prec_scores=c()
+log_l1_f1_scores=c()
+
+n=10 # folds
+
+for(k in 1:n){
+
+labs <- val_data_sets[[k]][["fully_booked_30"]]
+df=val_data_sets[[k]]
+new_x <- model.matrix(
+    as.formula(paste("~", paste(setdiff(names(df), 'fully_booked_30'), collapse = "+"))),
+   data =df
+  )[, -1]
+
+
+pred <- predict(
+      logmod_l1,
+      newx = new_x,
+      s = "lambda.1se",
+      type = "response"
+    )[, 1]
+
+labs <- ifelse(labs=='no',1,0) #as.numeric(labs)-1
+
+
+
+df_eval <- data.frame(
+    truth = factor(labs, levels = c(0, 1)),
+    estimate = factor(ifelse(pred >= tau, 1, 0), levels = c(0, 1)),
+    .pred_1 = pred
+  )
+
  
-# # Extract actual validation data for each fold, calculate and store the metric
-# 
-# cv_log_losses=c()
-# cv_recalls=c()
-# 
-# for (i in 1:10){
-#   val_data=listings_data_cleaned_features[val_list[[i]],]
-#   new_x=data.matrix(val_data[,features_train])
-#   cv_ytrue=as.numeric(val_data$fully_booked_30)-1
-#   #  outputs probabilities for the positive class
-#   cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
-#   
-#   # get log loss 
-#   cv_log_losses=c(cv_log_losses,logLoss(cv_ytrue,cv_pred))
-#   p_labs <- ifelse(cv_pred>=tau,1,0)
-#   t <- table(p_labs, cv_ytrue)
-#   acc <- mean(p_labs == cv_ytrue)
-#   rec <- recall(t, '1')
-#   cv_recalls=c(cv_recalls,rec)
-#    # Get AUPRC
-# 
-#   
-#   
-# }
-# 
-# overall_cv_log_l1=mean(cv_log_losses)
-# overall_cv_log_l1 # now do this for all metrics :()
-# 
-# 
-# val_data=listings_data_cleaned_features[val_list[[1]],]
-# new_x=data.matrix(val_data[,features_train])
-# cv_ytrue=as.numeric(val_data$fully_booked_30)-1
-# cv_pred=predict(logmod_l1,newx=new_x , s = "lambda.1se",type='response')
-# p_labs <- ifelse(cv_pred>=tau,1,0)
-# t <- table(p_labs, cv_ytrue)
-# acc <- mean(p_labs == cv_ytrue)
-# #rec <- recall(t, '1')
-# 
-# TP=sum(p_labs == 1 & cv_ytrue == 1)
-# 
-# FN=sum(p_labs == 0 & cv_ytrue == 1)
-# 
-# recall=TP / (TP + FN)
-# 
-# 
-# 
-# 
+ log_loss_ <- mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+ rec  <- yardstick::recall(df_eval, truth, estimate)$.estimate
+ sp   <- yardstick::spec(df_eval, truth, estimate)$.estimate
+ prec <- yardstick::precision(df_eval, truth, estimate)$.estimate
+ f1   <- yardstick::f_meas(df_eval, truth, estimate)$.estimate
+ acc  <- yardstick::accuracy(df_eval, truth, estimate)$.estimate
+ 
+log_l1_logloss_scores=c(log_l1_logloss_scores,log_loss_)
+log_l1_prauc_scores=c(log_l1_prauc_scores, prauc)
+log_l1_rec_scores=c(log_l1_rec_scores,rec)
+log_l1_sp_scores=c(log_l1_sp_scores,sp )
+log_l1_prec_scores=c(log_l1_prec_scores,prec)
+log_l1_f1_scores=c(log_l1_f1_scores, f1)
+log_l1_acc_scores=c(log_l1_acc_scores, acc)
+ 
+ }
 
+
+cv_log_l1_results=data.frame(list(model='L1 Logistic_regression', 
+     Log.loss=mean(log_l1_logloss_scores,na.rm=T),
+     AUPRC=mean(log_l1_prauc_scores,na.rm=T),
+     Recall=mean(log_l1_rec_scores,na.rm=T),
+     Specificity=mean(log_l1_sp_scores,na.rm=T),
+     Precision=mean(log_l1_prec_scores,na.rm=T),
+     F1=mean(log_l1_f1_scores,na.rm=T),
+     Accuracy=mean(log_l1_acc_scores,na.rm=T)
+     ))
+ 
+  
+
+ 
+ 
+ 
+```
+
+```{r}
+cv_log_l1_results
 ```
 
 ```{r,cv_rf_pred,echo=TRUE,eval=F}
-# get preictions
-rf_yhat=rf_gridsearch$pred %>% select(pred) %>% pull()
-rf_row_ind=rf_gridsearch$pred %>% select(rowIndex) %>% pull(rowIndex)
-rf_obs=listings_data_cleaned_features[rf_row_ind,]
+
+# CV metrics for rf
+# Get fold indicies
+x_train=listings_data_cleaned_features %>% select(any_of(features_train))
+
+train_indices =rf_gridsearch$control$index
+all_indices <- seq_len(nrow(x_train))
+
+
+rf_validation_indices <- lapply(train_indices, function(train_idx) {
+  setdiff(all_indices, train_idx)
+})
+
+
+# Get validation data sets
+
+
+n <- 10 # nr K folds
+rf_val_data_sets <- vector("list", n)
+
+for (i in 1:n){
+  val_data=listings_data_cleaned_features[rf_validation_indices[[i]],] # get the actual observations from the fold ids
+  rf_val_data_sets[[i]]=val_data
+  
+}
 
 
 
-# get prob predictions, will do later
-rf_cv_pred=predict(rf_gridsearch,newdata=rf_obs,type = "prob")
-rf_cv_pred=rf_cv_pred %>% mutate(class= if_else(no>=tau,1,0))
+
+# Get CV val predictions
+
+rf_logloss_scores=c()
+rf_prauc_scores=c()
+rf_acc_scores=c()
+rf_rec_scores=c()
+rf_sp_scores=c()
+rf_prec_scores=c()
+rf_f1_scores=c()
+
+n=10 # folds
+
+for(k in 1:n){
+
+labs <- rf_val_data_sets[[k]][["fully_booked_30"]]
+df=rf_val_data_sets[[k]]
 
 
-# rf_ytru
-rf_ytru=listings_data_cleaned_features[rf_row_ind,]$fully_booked_30
 
+new_data=df %>% select(any_of(features_train))
+
+pred=predict(rf_gridsearch,newdata=
+new_data,type = "prob")[,'no']
+
+labs <- if_else(labs=='no',1,0)
+
+
+
+df_eval <- data.frame(
+    truth = factor(labs, levels = c(0, 1)),
+    estimate = factor(ifelse(pred >= tau, 1, 0), levels = c(0, 1)),
+    .pred_1 = pred
+  )
+
+ 
+ log_loss_ = mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ acc  = yardstick::accuracy(df_eval, truth, estimate)$.estimate
+ prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+ rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
+ sp   = yardstick::spec(df_eval, truth, estimate)$.estimate
+ prec = yardstick::precision(df_eval, truth, estimate)$.estimate
+ f1   = yardstick::f_meas(df_eval, truth, estimate)$.estimate
+ 
+rf_logloss_scores=c(rf_logloss_scores,log_loss_)
+rf_prauc_scores=c(rf_prauc_scores, prauc)
+rf_acc_scores=c(rf_acc_scores, acc)
+rf_rec_scores=c(rf_rec_scores,rec)
+rf_sp_scores=c(rf_sp_scores,sp )
+rf_prec_scores=c(rf_prec_scores,prec)
+rf_f1_scores=c(rf_f1_scores, f1)
+ 
+ }
+
+
+cv_rf_results=data.frame(list(model='Random Forest', 
+     Log.loss=mean(rf_logloss_scores,na.rm=T),
+     AUPRC=mean(rf_prauc_scores,na.rm=T),
+     Recall=mean(rf_rec_scores,na.rm=T),
+     Specificity=mean(rf_sp_scores,na.rm=T),
+     Precision=mean(rf_prec_scores,na.rm=T),
+     F1=mean(rf_f1_scores,na.rm=T),
+     Accuracy=mean(rf_acc_scores,na.rm=T)
+     ))
+ 
+  
+
+cv_rf_results
+
+```
+
+```{r gbm_cv,echo=F,eval=T}}
+
+# Get predictions
+
+
+
+x_train=listings_data_cleaned_features %>% select(any_of(features_train))
+
+train_indices =gbm_all_gridsearch$control$index
+all_indices <- seq_len(nrow(x_train))
+
+
+gbm_validation_indices <- lapply(train_indices, function(train_idx) {
+  setdiff(all_indices, train_idx)
+})
+
+
+
+n <- 10 # nr K folds
+gbm_val_data_sets <- vector("list", n)
+
+for (i in 1:n){
+  val_data=listings_data_cleaned_features[gbm_validation_indices [[i]],] # get the actual observations from the fold ids
+  gbm_val_data_sets[[i]]=val_data
+  
+}
+
+
+
+gbm_logloss_scores=c()
+gbm_prauc_scores=c()
+gbm_acc_scores=c()
+gbm_rec_scores=c()
+gbm_sp_scores=c()
+gbm_prec_scores=c()
+gbm_f1_scores=c()
+
+n=10 # folds
+
+for(k in 1:n){
+
+labs <-gbm_val_data_sets[[k]][["fully_booked_30"]]
+df=gbm_val_data_sets[[k]]
+
+
+
+new_data=df %>% select(any_of(features_train))
+
+pred=predict(gbm_all_gridsearch,newdata=
+new_data,type = "prob")[,'no']
+
+labs <- labs <- ifelse(labs == "no",1,0)
+
+
+df_eval <- data.frame(
+    truth = factor(labs, levels = c(0, 1)),
+    estimate = factor(ifelse(pred >= tau, 1, 0), levels = c(0, 1)),
+    .pred_1 = pred
+  )
+
+ 
+ log_loss_ = mn_log_loss(df_eval, truth, .pred_1)$.estimate
+ prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+ acc= yardstick::accuracy(df_eval, truth, estimate)$.estimate
+ rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
+ sp  = yardstick::spec(df_eval, truth, estimate)$.estimate
+ prec = yardstick::precision(df_eval, truth, estimate)$.estimate
+ f1   = yardstick::f_meas(df_eval, truth, estimate)$.estimate
+ 
+gbm_logloss_scores=c(gbm_logloss_scores,log_loss_)
+gbm_prauc_scores=c( gbm_prauc_scores, prauc)
+gbm_acc_scores=c(gbm_acc_scores, acc)
+gbm_rec_scores=c(gbm_rec_scores,rec)
+gbm_sp_scores=c(gbm_sp_scores,sp )
+gbm_prec_scores=c(gbm_prec_scores,prec)
+gbm_f1_scores=c(gbm_f1_scores, f1)
+ 
+ }
+
+
+cv_gbm_results=data.frame(list(model='GBM XG Boost', 
+     Log.loss=mean(gbm_logloss_scores,na.rm=T),
+     AUPRC=mean(gbm_prauc_scores,na.rm=T),
+     Recall=mean(gbm_rec_scores,na.rm=T),
+     Specificity=mean(gbm_sp_scores,na.rm=T),
+     Precision=mean(gbm_prec_scores,na.rm=T),
+     F1=mean(gbm_f1_scores,na.rm=T),
+     Accuracy=mean(gbm_acc_scores,na.rm=T)
+     ))
+ 
+  
+
+cv_gbm_results
 
 
 ```
 
-```{r,metrics}
+```{r}
+#| fig-height: 8
+#| fig-width: 8
+# concat results
+ library(patchwork)
+all_metrics=rbind(cv_log_l1_results,cv_rf_results,cv_gbm_results)
 
 
+# plot all metrics
+
+met_rics=names(all_metrics)[2:length(all_metrics)]
+
+fig_loss=ggplot(all_metrics, aes(x= model ,y=Log.loss)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV Log Loss Per Model ',x=' ')+
+  theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 1))
+  
+fig_auprc=ggplot(all_metrics, aes(x= model ,y=AUPRC)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV AUPRC Per Model ',x=' ')+
+  theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+
+
+fig_recall=ggplot(all_metrics, aes(x= model ,y=Recall)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV Recall Per Model ',x=' ')+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+
+fig_spec=ggplot(all_metrics, aes(x= model ,y=Specificity)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV Specificity Per Model ',x=' ')+
+  theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+  
+
+
+fig_prec=ggplot(all_metrics, aes(x= model ,y=Precision)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV Prec Per Model ',x=' ')+
+  theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+
+fig_f1=ggplot(all_metrics, aes(x= model ,y=F1)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV F1 Per Model ',x=' ')+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+
+fig_acc=ggplot(all_metrics, aes(x= model ,y=Accuracy)) +
+  geom_col(fill='steelblue')+
+  labs(title='CV Accuracy Per Model', x=' ')+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, vjust =  0.9,, hjust = 1))
+
+
+(fig_loss+fig_auprc+fig_recall)/(fig_spec+fig_prec+fig_f1)+(fig_acc)
+
+```
+
+```{r}
+library(MLeval)
+# pred_l1=predict(logmod_l1, Default, 'response')
+# pred <- prediction(phat3, Y)
+# perf  <- performance(pred, 'tpr', 'fpr')
+# plot(perf, colorize = FALSE, col = 'black')
+# lines(c(0,1), c(0,1), col = 'gray', lty = 4)
+# 
+# # tau = 0.5
+# points(compar[1,1] ~ compar[2,1], col = 'red', pch = 16)
+# text(compar[1,1] ~ compar[2,1], labels = 0.5, pos = 4)
+# 
+# # tau = 0.2
+# points(compar[1,2] ~ compar[2,2], col = 'red', pch = 16)
+# text(compar[1,2] ~ compar[2,2], labels = 0.2, pos = 4)
+
+res_rf <- evalm(rf_gridsearch)
+
+
+res_gbm <- evalm(gbm_all_gridsearch)
+
+
+
+# 
 ```
