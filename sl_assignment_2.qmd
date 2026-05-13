@@ -531,7 +531,7 @@ library(doParallel)
 library(foreach)
 set.seed(123)
 
-ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final",)
+ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
 
 gbm_feats=listings_data_cleaned_features %>% select(any_of( c(non_zero_feats,'fully_booked_30') ) )
 
@@ -621,7 +621,9 @@ library(doParallel)
 library(foreach)
 set.seed(123)
 
-ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss)
+# ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss)
+
+ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
 
 
 gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
@@ -630,26 +632,26 @@ gbm_grid <- expand.grid(n.trees = c(1000,3000,5000),
                               n.minobsinnode = 10)
 
 #CV for hyper parameter tuning
-#n_cores <- parallel::detectCores() - 1  # leave one core free
-#cl <- makeCluster(n_cores)
-#clusterEvalQ(cl, library(Metrics))
-#registerDoParallel(cl)
-#clusterExport(cl, varlist = c("log_loss"))
+n_cores <- parallel::detectCores() - 1  # leave one core free
+cl <- makeCluster(n_cores)
+clusterEvalQ(cl, library(Metrics))
+registerDoParallel(cl)
+clusterExport(cl, varlist = c("log_loss"))
 
-# gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
-#                               method = 'gbm',
-#                               distribution = "bernoulli", #
-#                               trControl = ctrl,
-#                               verbose = T,
-#                               tuneGrid = gbm_grid,
-#                               metric = "LogLoss",
-#                               weights=weights_vector)
-# 
-# stopCluster(cl)
-# registerDoSEQ()
-# 
-# 
-# save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
+gbm_all_gridsearch <- train(fully_booked_30 ~ .,data =listings_data_cleaned_features,
+                              method = 'gbm',
+                              distribution = "bernoulli", #
+                              trControl = ctrl,
+                              verbose = T,
+                              tuneGrid = gbm_grid,
+                              metric = "LogLoss",
+                              weights=weights_vector)
+
+stopCluster(cl)
+registerDoSEQ()
+
+
+save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
 load('gbm_all_gridsearch.Rdata')
 ```
 
