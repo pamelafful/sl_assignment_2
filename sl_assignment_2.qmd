@@ -107,6 +107,7 @@ library(Metrics)
 library(lattice)
 library(PRROC)
 library(yardstick)
+library(ROCR)
 ```
 
 ```{r, data_load, eval=T,echo=F}
@@ -500,8 +501,15 @@ ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions =
 # stopCluster(cl)
 # registerDoSEQ()
 
+
 #write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
 saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+
+
+#write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
+#saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+
+
 # 
 
 rf_gridsearch =readRDS("caret_rf_grid_results_cv_weights.rds")
@@ -567,6 +575,7 @@ non_zero_feats
 library(doParallel)
 library(foreach)
 set.seed(123)
+library
 
 # ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
 # 
@@ -598,10 +607,16 @@ set.seed(123)
 # registerDoSEQ()
 # 
 # save(gbm_gridsearch , file = 'gbm_gridsearch.Rdata')
+
 # load('gbm_gridsearch_2.Rdata')
+
+load('gbm_gridsearch.Rdata')
+#rf_gridsearch =readRDS("caret_rf_grid_results_cv_weights.rds")
+
 ```
 
 ```{r, gbm_load,eval=F,echo=F}
+#gbm_gridsearch=gbm_all_gridsearch
 gbm_gridsearch$results %>% 
   mutate(
     interaction.depth = factor(interaction.depth),
@@ -696,7 +711,12 @@ gbm_grid <- expand.grid(n.trees = c(500,1000,1500),
 
 
 #save(gbm_all_gridsearch , file = 'gbm_all_gridsearch.Rdata')
+
 saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+
+#saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+
+
 #load('gbm_all_gridsearch.Rdata')
 ```
 
@@ -811,8 +831,6 @@ evaluate_on_validations <- function(val_list, model, target_col, tau = tau) {
 
 ```
 
-\_
-
 ```{r,cv_l1_log_pred,echo=F,eval=T}
 
 # CV metrics for L1 logistic regression
@@ -835,7 +853,11 @@ n <- 10 # nr K folds
 log_val_data_sets <- vector("list", n)
 
 for (i in 1:n){
+
   val_data=listings_data_cleaned_features[val_list[[i]],] # get the actual observations from the fold ids
+
+  val_data=listings_data_cleaned_features[log_l1_val_list[[i]],] # get the actual observations from the fold ids
+
   log_val_data_sets[[i]]=val_data
   
 }
@@ -880,7 +902,11 @@ df_eval <- data.frame(
 
  
  log_loss_ <- mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
+
  prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+
+ prauc= pr_auc(df_eval, truth, .pred_1,event_level='second')$.estimate # use second level as this is the event,positive class
+
  rec  <- yardstick::recall(df_eval, truth, estimate)$.estimate
  sp   <- yardstick::spec(df_eval, truth, estimate)$.estimate
  prec <- yardstick::precision(df_eval, truth, estimate)$.estimate
@@ -911,12 +937,8 @@ cv_log_l1_results=data.frame(list(model='L1 Logistic_regression',
   
 
  
+ cv_log_l1_results
  
- 
-```
-
-```{r}
-cv_log_l1_results
 ```
 
 ```{r,cv_rf_pred,echo=TRUE,eval=F}
@@ -988,7 +1010,7 @@ levels(df_eval$truth)
  
  log_loss_ = mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  acc  = yardstick::accuracy(df_eval, truth, estimate)$.estimate
- prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+ prauc= pr_auc(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
  sp   = yardstick::spec(df_eval, truth, estimate)$.estimate
  prec = yardstick::precision(df_eval, truth, estimate)$.estimate
@@ -1021,16 +1043,31 @@ cv_rf_results
 
 ```
 
+
+```{r}
+train_sel_feat=names(gbm_gridsearch$trainingData)[2:length(names(gbm_gridsearch$trainingData))]
+train_sel_feat
+```
+
 ```{r gbm_cv_all,echo=F,eval=T}}
 
 # Get predictions
 #train_sel_feat
 #features_train
 #train_sel_feat
-  
+
 x_train=listings_data_cleaned_features %>% select(any_of(features_train))
 
 train_indices =gbm_all_gridsearch$control$index
+
+  
+x_train=listings_data_cleaned_features %>% select(any_of(train_sel_feat))
+
+train_indices =gbm_gridsearch$control$index
+
+#x_train=listings_data_cleaned_features %>% select(any_of(features_train))
+
+
 all_indices <- seq_len(nrow(x_train))
 
 
@@ -1059,7 +1096,13 @@ gbm_sp_scores=c()
 gbm_prec_scores=c()
 gbm_f1_scores=c()
 
+# prediction vectors
+
+
 n=10 # folds
+
+gbm_val_data_predictions_sets <- vector("list", n)
+true_label_list=vector("list", n)
 
 for(k in 1:n){
 
@@ -1073,7 +1116,21 @@ new_data=df %>% select(any_of(features_train))#
 pred=predict(gbm_all_gridsearch,newdata= #gbm_all_gridsearch
 new_data,type = "prob")[,'no']
 
-labs <- labs <- ifelse(labs == "no",1,0)
+
+new_data=df %>% select(any_of(train_sel_feat))#
+#new_data=df %>% select(any_of(features_train))
+
+
+#pred=predict(gbm_gridsearch,newdata=new_data)#
+#gbm_all_gridsearch
+
+pred=predict(gbm_gridsearch,newdata=new_data,type = "prob")[,'no']
+
+
+gbm_val_data_predictions_sets[[k]]=pred # save the predictiond for each validation fold
+
+labs <-ifelse(labs == "no",1,0) # encode the labels
+true_label_list[[k]]=labs # store the true labels for each fold
 
 
 df_eval <- data.frame(
@@ -1084,7 +1141,12 @@ df_eval <- data.frame(
 
  
  log_loss_ = mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
+
  prauc= pr_auc(df_eval, truth, .pred_1)$.estimate
+
+
+ prauc= pr_auc(df_eval, truth, .pred_1,event_level = 'second')$.estimate
+
  acc= yardstick::accuracy(df_eval, truth, estimate)$.estimate
  rec  = yardstick::recall(df_eval, truth, estimate)$.estimate
  sp  = yardstick::spec(df_eval, truth, estimate)$.estimate
@@ -1181,30 +1243,127 @@ fig_acc=ggplot(all_metrics, aes(x= model ,y=Accuracy)) +
 
 ```
 
+**Boosting tree** is the best model, given all the metrics:\
+
+-   Lowest penalty of negative predictions from log loss- primary metric
+
+-   Best AUPRC- best metric for imbalanced data set
+
+```{r,gmb_roc, eval=T, echo=F}
+#| message: false
+#| warning: false
+library(ROCR)
+library(pROC)
+library(AUC)
+
+
+result <- function(x) {
+  ifelse(x < tau, 0, 1)
+}
+
+#x= probabilities of the bieng in the positive class
+# x<tau label=0
+#x>tau label=1
+predictions=gbm_val_data_predictions_sets #CV validation predictions
+predictions_labels=lapply(predictions, result)
+labels=true_label_list # true labels
+pred = prediction(predictions, labels)
+
+
+
+threshold <- tau
+
+sensitivity_list <- sapply(seq_along(labels), function(i) {
+  truth <- factor(labels[[i]], levels = c(0, 1))
+  pred <- factor(ifelse(predictions[[i]] >= threshold, 1, 0), levels = c(0, 1))
+  
+  sens(data.frame(truth, pred), truth = truth, estimate = pred)$.estimate
+})
+
+specificity_list <- sapply(seq_along(labels), function(i) {
+  truth <- factor(labels[[i]], levels = c(0, 1))
+  pred <- factor(ifelse(predictions[[i]] >= threshold, 1, 0), levels = c(0, 1))
+  
+  spec(data.frame(truth, pred), truth = truth, estimate = pred)$.estimate
+})
+
+
+CV_tprs=mean(sensitivity_list) # mean across val folds
+CV_fprs=mean(1-specificity_list)# mean across val folds
+CV_tprs;CV_fprs
+
+
+perf = performance(pred, "tpr", "fpr")
+plot(perf, col="grey82", lty=3,lwd=4,main=' Boosted Tree 10 Fold CV ROC')
+plot(perf, avg="vertical", lwd=3, col="blue", add=TRUE)
+points(CV_fprs,CV_tprs, col = 'red', pch = 16)
+abline(a = 0, b = 1, col = "grey60", lty = 2, lwd = 2)
+text(CV_fprs,CV_tprs-0.1, labels =  bquote(tau == .(threshold)), pos = 4, col = "black",offset = 0.5)
+
+
+
+
+
+
+
+
+
+```
+
+# Section 4- Interpretation
+
 ```{r}
-library(MLeval)
-# pred_l1=predict(logmod_l1, Default, 'response')
-# pred <- prediction(phat3, Y)
-# perf  <- performance(pred, 'tpr', 'fpr')
-# plot(perf, colorize = FALSE, col = 'black')
-# lines(c(0,1), c(0,1), col = 'gray', lty = 4)
-# 
-# # tau = 0.5
-# points(compar[1,1] ~ compar[2,1], col = 'red', pch = 16)
-# text(compar[1,1] ~ compar[2,1], labels = 0.5, pos = 4)
-# 
-# # tau = 0.2
-# points(compar[1,2] ~ compar[2,2], col = 'red', pch = 16)
-# text(compar[1,2] ~ compar[2,2], labels = 0.2, pos = 4)
+library(vip)
+# Best Model= GBM
 
-res_rf <- evalm(rf_gridsearch)$roc
+```
+
+```{r,echo=F,eval=T}
+# Answer rest of q3
 
 
-res_gbm <- evalm(gbm_all_gridsearch)$roc
+var_imp_gmb=varImp(gbm_gridsearch)
+var_imp_gmb$Feature=row.names(var_imp_gmb)
 
 
 
-# 
+gini_imp=var_imp_gmb%>% 
+  ggplot(aes(x=Feature,y=Overall))+
+  geom_col(fill='steelblue')+
+  labs(title='GBM Impurity Variable Importance', x='Feature',y='Relative Importance (%)')+theme_minimal()
+
+
+x_train=listings_data_cleaned_features %>% select(any_of(train_sel_feat))
+
+pred_wrapper=function(object,newdata){
+  predict(object,newdata=newdata,type = "prob")[,'no'] # prediction probabilities for AUC
+  
+}
+
+vi <- vi_permute(
+  object = gbm_gridsearch,
+  feature_names = colnames(x_train),
+  train = x_train,
+  target = listings_data_cleaned_features$fully_booked_30,
+  metric = 'roc_auc',#"Accuracy",   # or "AUC", "RMSE"
+  pred_wrapper  = pred_wrapper,
+  nsim = 5,
+  event_level = "second"
+  
+)
+
+```
+
+```{r}
+p_feature_impo=vi %>% ggplot(aes(y= reorder(Variable, Importance),x=Importance)) +
+  geom_col(fill='steelblue')+
+  labs(title='Permutation Variable Importance', x='Importance',y='Featutre')+theme_minimal()
+  
+p_feature_impo/ gini_imp
+```
+
+```{r,}
+# Partial plots
 ```
 
 ```{r}
