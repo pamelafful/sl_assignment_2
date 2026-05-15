@@ -1385,19 +1385,46 @@ registerDoSEQ()
 
 ```
 
-```{r}
- saveRDS(pdp_data_v1,file='pdp_data_v1.rds')
- saveRDS(pdp_data_v2,file='pdp_data_v2.rds')
-  saveRDS(pdp_data_v3,file='pdp_data_v3.rds')
-   saveRDS(pdp_data_v4,file='pdp_data_v4.rds')
+```{r pdp_plots, eval=T,echo=F}
+#| message: false
+#| warning: false
+#| fig-height: 6
+#| fig-width: 10
+#| fig-cap: "Partial Dependence Plots for Top 4 Features"
 
-#  
-# write.table(pdp_data, 
-#             file = "pdp_data.csv", 
-#             sep = ",", 
-#             col.names = T, 
-#             )
- 
+
+ # saveRDS(pdp_data_v1,file='pdp_data_v1.rds')
+ # saveRDS(pdp_data_v2,file='pdp_data_v2.rds')
+ #  saveRDS(pdp_data_v3,file='pdp_data_v3.rds')
+ #   saveRDS(pdp_data_v4,file='pdp_data_v4.rds')
+
+pdp_data_v1 <- readRDS("pdp_data_v1.rds")
+pdp_data_v2 <- readRDS("pdp_data_v2.rds")
+pdp_data_v3 <- readRDS("pdp_data_v3.rds")
+pdp_data_v4 <- readRDS("pdp_data_v4.rds")
+
+p1=pdp_data_v1 %>% ggplot(aes(x=reviews_per_month,y=yhat))+
+  geom_line()+
+  labs(title='ReviewS Per Month vs Predicted Probabilities', x=' Reviews Per Month', y='predicted prob(Y=no)')+
+  theme_minimal()
+
+p2=pdp_data_v2 %>% ggplot(aes(x=host_since_months_int,y=yhat))+
+  geom_line()+
+  labs(title='Host Age vs Predicted Probabilities', x='Host Age (months)', y='predicted prob(Y=no)')+
+  theme_minimal()
+
+p3=pdp_data_v3 %>% ggplot(aes(x=minimum_nights_avg_ntm,y=yhat))+
+  geom_line()+
+  labs(title='Avg Minimum Nights vs Predicted Probabilities', x='Average Min Nights', y='predicted prob(Y=no)')+
+  theme_minimal()
+
+p4=pdp_data_v4 %>% ggplot(aes(x=review_scores_rating,y=yhat))+
+  geom_line()+
+  labs(title='Review Scores Rating vs Predicted Probabilities', x='Review Scores Rating', y='predicted prob(Y=no)')+
+  theme_minimal()
+
+(p1+p2)/(p3+p4)
+
 ```
 
 ```{r,test,eval=F,echo=F}
