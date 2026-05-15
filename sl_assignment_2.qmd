@@ -641,13 +641,13 @@ kable(rf_gridsearch$bestTune,caption='Best RF HyperParameters')
 
 ```
 
-The best CV accuracy score is achieved at the parameters shown below
+The best CV accuracy score is achieved at the parameters shown above.
 
 **Boosting Model**
 
-The gbm model is trained on the non-zero features from the L1 regularized model to speed up training,, as it has been reasonably established that the majority of these are not meaningful to the model.
+The gbm model is trained on the non-zero features from the L1 regularized model to speed up training, as it has been reasonably established that the majority of these features are not meaningful to the model.
 
-Also, a custom log-loss function is used as the primary metric for the the cross validation training- thus the hyper parameters that yield the lowest log loss function are chosen as the best during training.
+Also, a custom log-loss function is used as the primary metric for the cross-validation training- thus the hyper parameters that yield the CV lowest log loss function are chosen as the best during training.
 
 ```{r,non_zero_coeff,echo=F,eval=F}
 non_zero_feats=best_coeff %>% filter(Coefficient!=0) %>% pull(Feature)
@@ -762,7 +762,7 @@ sel_feat=names(gbm_gridsearch$trainingData)
 train_sel_feat=sel_feat[sel_feat!='.outcome']
 ```
 
-```{r,gbm_all,eval=TRUE,echo=TRUE}
+```{r,gbm_all,eval=TRUE,echo=F}
 # using all features comparability
 
 library(doParallel)
@@ -830,7 +830,9 @@ tau= listings_data_cleaned_features %>% count(fully_booked_30) %>% mutate(
 
 ```
 
-```{r,metrics_fuc,eval=T,echo=F}
+```{r metrics_fuc, eval=T, echo=F}
+#| fig-height: 7
+#| fig-width: 6
 #library(ditto)
 library(ROCR)
 library(PRROC)
@@ -1132,7 +1134,7 @@ cv_rf_results=data.frame(list(model='Random Forest',
 
 ```
 
-```{r}
+```{r,echo=F,eval=T}
 train_sel_feat=names(gbm_gridsearch$trainingData)[2:length(names(gbm_gridsearch$trainingData))]
 
 ```
@@ -1269,17 +1271,20 @@ cv_gbm_results
 
 ```
 
-```{r}
+```{r,echo=F,eval=T}
 #| fig-height: 8
 #| fig-width: 8
+#| fig-cap: "Cross Model Cross Validation Metrics"
 # concat results
  library(patchwork)
+
 all_metrics=rbind(cv_log_l1_results,cv_rf_results,cv_gbm_results)
 
 
 # plot all metrics
 
 met_rics=names(all_metrics)[2:length(all_metrics)]
+
 
 fig_loss=ggplot(all_metrics, aes(x= model ,y=Log.loss)) +
   geom_col(fill='steelblue')+
@@ -1331,15 +1336,20 @@ fig_acc=ggplot(all_metrics, aes(x= model ,y=Accuracy)) +
 
 ```
 
-**Boosting tree** is the best model, given all the metrics:\
+**Boosting tree** is the best model, given all the metrics:
 
--   Lowest penalty of negative predictions from log loss- primary metric
+-   Lowest penalty of negative predictions from log loss which is the primary metric, that is the model is able to correctly classify the positive class with a high degree of confidence.
 
--   Best AUPRC- best metric for imbalanced data set
+-   Using the fraction of positive class observations available in the data, \~81%, all of the models report higher AUC scores relative to the baseline, although tree models, RF and GBM models report near perfect AUC scores (close to 1).
+
+-   For actual prediction-based metrics, Specificity, Precision, F1 and Accuracy, higher scores are observed for the RF models all across. In particular, CV and F1 scores are significantly higher \* add model explanation/interpretaion here
+
+Given the above, it is most important that a model is able to make predictions which a relatively high confidence, essentially better than a coin toss. Although count-based metric results are important for overall performance, for particularly imbalanced data as this, the dregree of confidence/probability becomes esapacially significant for positive/target class predictions. As such, the GBM model is selected as the the best model. It has the best probability-based metrics as well as the reasonably good count-based metrics.
 
 ```{r,gmb_roc, eval=T, echo=F}
 #| message: false
 #| warning: false
+#|fig-cap: "GBM CV AUC Score"
 library(ROCR)
 library(pROC)
 library(AUC)
@@ -1398,15 +1408,22 @@ text(CV_fprs,CV_tprs-0.1, labels =  bquote(tau == .(threshold)), pos = 4, col = 
 
 ```
 
+The ROC curve shows that model performance of the GBM model is very near to the perfect case (PRAUC=1) for the given cut-off threshold. The model produces a very high true positive rate ( i.e is able to classify the postive class with a high degree of accuracy), with a very low false positive rate. It is also significantky better tan the worst case scenario coin-flip.
+
 # Section 4- Interpretation
 
-```{r}
+```{r,echo=F,eval=T}
 library(vip)
 # Best Model= GBM
 
 ```
 
-```{r,feat_imp,echo=F,eval=T}
+```{r feat_imp, eval=T, echo=F}
+#| message: false
+#| warning: false
+#| fig-height: 5
+#| fig-width: 5
+#| fig-cap: "GBM Feature Importance"
 # Answer rest of q3
 
 
