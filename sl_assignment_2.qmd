@@ -1369,21 +1369,34 @@ best_trees=gbm_gridsearch$bestTune$n.trees
 
 top_4=vi %>% arrange(desc(Importance)) %>% head(4) %>% pull(Variable)
 
+n_cores <- parallel::detectCores() - 1  # leave one core free
+cl <- makeCluster(n_cores)
+clusterEvalQ(cl, library(caret))
+registerDoParallel(cl)
+# #clusterExport(cl, varlist = c("log_loss"))
 
+pdp_data_v1=partial(gbm_gridsearch, pred.var =top_4[1],prob=T , parallel = TRUE)
+pdp_data_v2=partial(gbm_gridsearch, pred.var =top_4[2],prob=T , parallel = TRUE)# parallel)
+pdp_data_v3=partial(gbm_gridsearch, pred.var =top_4[3],prob=T  ,parallel = TRUE)# Enable parallel)
+pdp_data_v4=partial(gbm_gridsearch, pred.var =top_4[4],prob=T  ,parallel = TRUE) # Enable parallel)
 
- pdp_data=partial(gbm_gridsearch, pred.var =top_4,prob=T )
-
+stopCluster(cl)
+registerDoSEQ()
 
 ```
 
 ```{r}
- saveRDS(pdp_data,file='pdp_data.rds')
- 
-write.table(pdp_data, 
-            file = "pdp_data.csv", 
-            sep = ",", 
-            col.names = T, 
-            )
+ saveRDS(pdp_data_v1,file='pdp_data_v1.rds')
+ saveRDS(pdp_data_v2,file='pdp_data_v2.rds')
+  saveRDS(pdp_data_v3,file='pdp_data_v3.rds')
+   saveRDS(pdp_data_v4,file='pdp_data_v4.rds')
+
+#  
+# write.table(pdp_data, 
+#             file = "pdp_data.csv", 
+#             sep = ",", 
+#             col.names = T, 
+#             )
  
 ```
 
