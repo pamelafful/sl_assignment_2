@@ -70,7 +70,6 @@ execute:
 
 library(dplyr)
 library(knitr)
-#library(skimr)
 library(plotly)
 library(ggplot2)
 library(ggpubr)
@@ -86,7 +85,6 @@ library(glmnet)
 library(lmridge)
 library(tidyr)
 library(caret)
-#library(MASS)
 library(dplyr)
 library(interactions)
 library(kableExtra)
@@ -113,12 +111,12 @@ library(ROCR)
 ```{r, data_load, eval=T,echo=F}
 
 listings_data=read.csv('listings.csv')
-
-
-
+nrow(listings_data);ncol(listings_data)
 ```
 
-# Data Wrangling
+# Introduction: Exploartory Data Analysis
+
+The training data consits of 10 rows of observations across 25 features. The the data is significantly imbalanced in favour of the target class at with \~81% of observations in the filly_booked_30='no' class.\
 
 ```{r, data_wrang, eval=T,echo=F}
 
@@ -136,32 +134,15 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          
                          
                          )
-
-
 ```
 
-```{r,eda,eval=T,echo=F}
+```{r,eda,eval=F,echo=F}
 
 # Plot the Air BNB locations
 
 
-# cities_poly <- ne_download(scale = 'large', type = 'urban_areas', category = 'cultural')
-
-#names(cities_poly)
-
-# za_admin2 <- ne_states(country = "South Africa", returnclass = "sf")
-# cape_town <- za_admin2[grep("Western Cape", za_admin2$name), ]
-
-#View(za_admin2 %>% filter(name=='Western Cape'))
-
 cols <- ifelse(listings_data_cleaned$fully_booked_30 == 'no', "red", "blue")
 
-# plot(st_geometry(cape_town ),
-#      col = NA,
-#      border = "black",
-#      lwd = 2,
-#      xlab = "Longitude",
-#      ylab = "Latitude")
 
 plot(listings_data_cleaned$longitude,
       listings_data_cleaned$latitude,
@@ -180,17 +161,56 @@ legend("topright",
        cex = 0.9)
 ```
 
-# EDA and Feature Selection
-
-```{r eval=TRUE, echo=F}
+```{r, target_dist, eval=TRUE, echo=F}
 #| message: false
 #| warning: false
-# used stratified smapling for training
-listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(n_cnt=length(host_id)) %>% ggplot(aes(x=fully_booked_30,y=n_cnt
-))+
-  geom_col(fill='steelblue')+
-  labs(title = "Fully Booked vs Non Fully Booked",y='#observations',
-       x = "30-day booked status")+
+#| fig-subcap: 
+#|   - "Spatial Plot of BNB Listings"
+#|   - "Fully Booked 30 Label Distribution"
+#| layout-ncol: 2
+
+
+
+
+# Plot the Air BNB locations
+
+
+cols <- ifelse(listings_data_cleaned$fully_booked_30 == 'no', "red", "blue")
+
+
+plot(listings_data_cleaned$longitude,
+      listings_data_cleaned$latitude,
+     xlab = "Longitude",
+     ylab = "Latitude",
+       pch = 16,
+       cex = 0.5,
+       col = cols)
+
+legend("topright",
+       legend = c("Fully Booked", "Not Fully Booked"),
+       col = c("blue", "red"),
+       pch = 16,
+       bty = "n",
+       title = "Fully Booked 30",
+       cex = 0.9)
+
+
+
+listings_data_cleaned %>% 
+  count(fully_booked_30) %>% 
+  mutate(
+    percentage = n / sum(n),
+    label = paste0(round(percentage * 100, 1), "%")
+  ) %>%
+  ggplot(aes(x = fully_booked_30, y = n)) +
+  geom_col(fill = 'steelblue') +
+  geom_text(aes(label = label), 
+            vjust = -0.5, size = 3) +
+  labs(
+    title = "Fully Booked vs Non Fully Booked",
+    y = '#observations',
+    x = "30-day booked status"
+  ) +
   theme_minimal()
 ```
 
@@ -199,27 +219,151 @@ listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(n_cnt=length(h
 #| warning: false
 # re-engineer the host sinece feature to an interger in months
 # keep date fixed to when this assignment satrted=May
+
+fixed_month_str=ymd("2026-05-01")
+fixed_month=floor_date(fixed_month_str,unit='month')
+
 listings_data_cleaned$host_since_months_int =listings_data_cleaned %>% mutate(host_since=ymd(host_since)  ) %>% 
   mutate(host_since_trunc=floor_date(host_since,unit='month')) %>% 
-  mutate(host_since_months_int= interval(host_since_trunc,floor_date(today(),unit='month'))%/% months(1) ) %>% mutate(current_date= floor_date( today(),unit='month' ) ) %>% 
-  dplyr::select(host_since_trunc,host_since_months_int,current_date ) %>% pull(host_since_months_int)
+  
+  mutate(host_since_months_int= interval(host_since_trunc,fixed_month) %/% months(1) ) %>% 
+  
+  mutate(current_date= floor_date( today(),unit='month' ) ) %>% 
+  
+  dplyr::select(host_since_trunc,host_since_months_int,current_date ) %>%
+  
+  pull(host_since_months_int)
 
  # create intervals for EDA purposes
-listings_data_cleaned %>% mutate(host_since_intervals=  cut(host_since_months_int, breaks=c(0,48,96,114,197),labels = c("0-2 yrs", "2-4 yrs", "4-6 yrs",'6+ yrs') )) %>% 
+a=listings_data_cleaned %>% mutate(host_since_intervals=  cut(host_since_months_int, breaks=c(0,48,96,114,197),labels = c("0-2 yrs", "2-4 yrs", "4-6 yrs",'6+ yrs') )) %>% 
   group_by(host_since_intervals,fully_booked_30) %>% 
   summarize(n_cnt=length(host_id)) %>% 
 ggplot(aes(x=fully_booked_30,y=n_cnt, fill=host_since_intervals))+
   geom_col(position="dodge")+
-  labs(title = "Fully Booked vs Non Fully Booked",y='#observations',
-       x = "30-day booked status")+
+  labs(title = "Fully Booked vs Non Fully Booked Host Age",y='#observations',
+       x = "30-day booked status",fill='host age bin')+
   theme_minimal()
+
+a= listings_data_cleaned %>% ggplot(aes(x=price,fill=fully_booked_30)) +
+  geom_boxplot()+
+    labs(title = "Host Age By 30d Fully Booked Status",x='host age (months)',
+       x = "30-day booked status",fill='30 booked status')+
+  theme_minimal()
+
+
+a <- listings_data_cleaned %>% 
+  ggplot(aes(x = fully_booked_30, 
+             y = host_since_months_int, 
+             fill = fully_booked_30)) +
+  geom_boxplot() +
+  labs(
+    title = "Host Age By 30d Fully Booked Status",
+    x = "30-day booked status",
+    y = "Host age (months)",
+    fill = "30 booked status"
+  ) +
+  theme_minimal()
+
+
+
   
 
 
 ```
 
 Use a novel decision tree to gauge which features could be important for determining the response variable. Since we have an imbalanced class, a weighted decision tree is used:\
-<https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>\
+<https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>
+
+```{r}
+num_vars=listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(
+  avg_host_response_rate=mean(host_response_rate),
+  avg_host_acceptance_rate=mean(host_acceptance_rate),
+  avg_host_listings_count=mean(host_listings_count),
+  avg_price=mean(price),
+  avg_minimum_nights=mean(minimum_nights),
+  avg_review_scores_rating=mean(review_scores_rating)
+)
+
+num_vars
+```
+
+```{r, bar_plots,echo=F,eval=T}
+#| message: false
+#| warning: false
+#| fig-height: 8
+#| fig-width: 15
+
+num_vars=listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(
+  avg_host_response_rate=mean(host_response_rate),
+  avg_host_acceptance_rate=mean(host_acceptance_rate),
+  avg_host_listings_count=mean(host_listings_count),
+  avg_price=mean(price),
+  avg_minimum_nights=mean(minimum_nights),
+  avg_review_scores_rating=mean(review_scores_rating)
+)
+
+
+
+
+vars <- c(
+  "host_response_rate",
+  "host_acceptance_rate",
+  "host_listings_count",
+  "price",
+  "minimum_nights",
+  "review_scores_rating"
+)
+
+
+
+# Initialize empty list
+plot_list <- list()
+
+# Loop through variables
+for (var in vars) {
+  
+  # Create summary dataframe dynamically
+  df_plot <- listings_data_cleaned %>%
+    group_by(fully_booked_30) %>%
+    summarise(mean_value = mean(.data[[var]], na.rm = TRUE))
+  
+  # Create plot
+  p <- ggplot(df_plot, aes(x = fully_booked_30, y = mean_value)) +
+    geom_col(fill = "steelblue") +
+    labs(
+      title = paste("Average", gsub("_", " ", var), "by Booking Status"),
+      x = "30-day booked status",
+      y = paste("Average", gsub("_", " ", var))
+    ) +
+    theme_minimal()
+  
+  # Store in list
+  plot_list[[var]] <- p
+}
+
+# View one example
+
+vars <- c(
+  "host_response_rate",
+  "host_acceptance_rate",
+  "host_listings_count",
+  "price",
+  "minimum_nights",
+  "review_scores_rating"
+)
+
+(plot_list[["price"]]+plot_list[["minimum_nights"]]+plot_list[["review_scores_rating"]])/ (plot_list[["host_acceptance_rate"]]+plot_list[["host_response_rate"]]+plot_list[["host_listings_count"]])+(a)
+```
+
+When grouping by the target variable, fully_booked_30, the following key insights are observed:
+
+-    Average Price and average minimum nights are slightly higher for observations in the "yes" class, with the gap much wider foraverage minimum nights (\~ 50 % higher than the "no" class).
+
+-   Average review scores and average response rate are fairly evenly split across the two target classes
+
+-   Average host listings are higher for the "no" class with an average of \~20 listings.
+
+-   For the host age, the median (118 months) host age is \~5% higher for the "yes" class compared to the no class. Moreover no class has a longer range of host ages, although the distributions abot the median for both groups are similar; most host ages lie below the median host age.
 
 ```{r,w_vec,eval=T,echo=FALSE}
 
@@ -235,6 +379,8 @@ weights_vector=unlist(weights_vector)
 
 listings_data_cleaned$fully_booked_30[1:5];
 ```
+
+A simple decision tree is ran to see how the nodes and targets are split in relation to the features
 
 ```{r get_feat, eval=T, echo=F}
 #| message: false
@@ -284,8 +430,6 @@ ggpairs( 1:4,mapping = aes(color = fully_booked_30), legend = 1 ) +
   theme(legend.position = "bottom") #setdiff(split_feats, "fully_booked_30")
 
 ```
-
--   comeback and add more
 
 # Model Training
 
@@ -571,7 +715,7 @@ non_zero_feats
 
 ```
 
-```{r,gbm_fit,eval=F,echo=F}
+```{r,gbm_fit,eval=T,echo=F}
 library(doParallel)
 library(foreach)
 set.seed(123)
@@ -658,10 +802,10 @@ gbm_gridsearch$results %>%
 plot(gbm_gridsearch)
 ```
 
-The best parameter is acquired at the hyperparametere combinatiations below:\
+The best parameter is acquired at the hyperparameter combinations below:\
 
 ```{r, best_com, eval=TRUE,echo=FALSE}
-kable(gbm_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
+kable(gbm_gridsearch$bestTune %>% dplyr::select(n.trees,interaction.depth,shrinkage) %>% 
         rename(`nr trees`=n.trees,`interaction depth`=interaction.depth)
         , caption = 'GBM Best HyperParameter Combination')
 ```
@@ -725,7 +869,7 @@ plot(gbm_gridsearch )
 ```
 
 ```{r,gbm_all_best,echo=TRUE,eval=TRUE}
-kable(gbm_gridsearch$bestTune %>% select(n.trees,interaction.depth,shrinkage) %>% 
+kable(gbm_gridsearch$bestTune %>% dplyr:: select(n.trees,interaction.depth,shrinkage) %>% 
         rename(`nr trees`=n.trees,`interaction depth`=interaction.depth)
         , caption = 'GBM Best HyperParameter Combination')
 ```
@@ -941,11 +1085,11 @@ cv_log_l1_results=data.frame(list(model='L1 Logistic_regression',
  
 ```
 
-```{r,cv_rf_pred,echo=TRUE,eval=F}
+```{r,cv_rf_pred,echo=F,eval=T}
 
 # CV metrics for rf
 # Get fold indicies
-x_train=listings_data_cleaned_features %>% select(any_of(features_train))
+x_train=listings_data_cleaned_features %>% dplyr::select(any_of(features_train))
 
 train_indices =rf_gridsearch$control$index
 all_indices <- seq_len(nrow(x_train))
@@ -990,7 +1134,7 @@ df=rf_val_data_sets[[1]]
 
 
 
-new_data=df %>% select(any_of(features_train))
+new_data=df %>% dplyr::select(any_of(features_train))
 
 pred=predict(rf_gridsearch,newdata=
 new_data,type = "prob")[,'no']
@@ -1006,7 +1150,7 @@ df_eval <- data.frame(
     .pred_1 = pred
   )
 
-levels(df_eval$truth)
+
  
  log_loss_ = mn_log_loss(df_eval, truth, .pred_1,event_level = 'second')$.estimate
  acc  = yardstick::accuracy(df_eval, truth, estimate)$.estimate
@@ -1039,16 +1183,16 @@ cv_rf_results=data.frame(list(model='Random Forest',
  
   
 
-cv_rf_results
+
 
 ```
 
 ```{r}
 train_sel_feat=names(gbm_gridsearch$trainingData)[2:length(names(gbm_gridsearch$trainingData))]
-train_sel_feat
+
 ```
 
-```{r gbm_cv_all,echo=F,eval=T}}
+```{r gbm_cv_all,echo=F,eval=T}
 
 # Get predictions
 #train_sel_feat
@@ -1060,7 +1204,7 @@ train_sel_feat
 # train_indices =gbm_all_gridsearch$control$index
 
   
-x_train=listings_data_cleaned_features %>% select(any_of(train_sel_feat))
+x_train=listings_data_cleaned_features %>% dplyr::select(any_of(train_sel_feat))
 
 train_indices =gbm_gridsearch$control$index
 
@@ -1116,7 +1260,7 @@ df=gbm_val_data_sets[[1]]
 # new_data,type = "prob")[,'no']
 
 
-new_data=df %>% select(any_of(train_sel_feat))#
+new_data=df %>% dplyr::select(any_of(train_sel_feat))#
 #new_data=df %>% select(any_of(features_train))
 
 
@@ -1317,7 +1461,7 @@ library(vip)
 
 ```
 
-```{r,echo=F,eval=T}
+```{r,feat_imp,echo=F,eval=T}
 # Answer rest of q3
 
 
@@ -1332,7 +1476,7 @@ gini_imp=var_imp_gmb%>%
   labs(title='GBM Impurity Variable Importance', x='Feature',y='Relative Importance (%)')+theme_minimal()
 
 
-x_train=listings_data_cleaned_features %>% select(any_of(train_sel_feat))
+x_train=listings_data_cleaned_features %>% dplyr::select(any_of(train_sel_feat))
 
 pred_wrapper=function(object,newdata){
   predict(object,newdata=newdata,type = "prob")[,'no'] # prediction probabilities for AUC
@@ -1351,9 +1495,11 @@ vi <- vi_permute(
   
 )
 
+
+
 ```
 
-```{r}
+```{r,feat_imp_plot,echo=FALSE,eval=T}
 p_feature_impo=vi %>% ggplot(aes(y= reorder(Variable, Importance),x=Importance)) +
   geom_col(fill='steelblue')+
   labs(title='Permutation Variable Importance', x='Importance',y='Featutre')+theme_minimal()
@@ -1361,7 +1507,7 @@ p_feature_impo=vi %>% ggplot(aes(y= reorder(Variable, Importance),x=Importance))
 p_feature_impo/ gini_imp
 ```
 
-```{r,pdp,echo=F,eval=T}
+```{r,pdp,echo=F,eval=F}
 library(pdp)
 # Partial plots
 # Use most important features
@@ -1463,7 +1609,7 @@ test_cleaned  <- test_cleaned  %>%
                              "f" = "FALSE"))
 
 # Using selected feature model
-test_sel=test_cleaned %>% select(any_of(train_sel_feat))
+test_sel=test_cleaned %>% dplyr::select(any_of(train_sel_feat))
 test_pred_probs=predict(gbm_gridsearch,newdata=test_sel,type = "prob")[,'no']
 
 # get test predictions
@@ -1475,9 +1621,4 @@ write.table(test_pred_probs_df,
             col.names = FALSE, 
             row.names = FALSE)
 
-```
-
-```{r}
-test %>% #filter(is.null(instant_bookable)) %>% 
-  select(instant_bookable)
 ```
