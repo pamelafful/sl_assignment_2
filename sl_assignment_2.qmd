@@ -503,7 +503,7 @@ ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions =
 
 
 #write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
-saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
+#saveRDS(rf_gridsearch, file = "caret_rf_grid_results_cv_weights.rds")
 
 
 #write.csv(rf_gridsearch$results, "caret_rf_grid_results_cv_weights.csv")
@@ -854,7 +854,7 @@ log_val_data_sets <- vector("list", n)
 
 for (i in 1:n){
 
-  val_data=listings_data_cleaned_features[val_list[[i]],] # get the actual observations from the fold ids
+  val_data=listings_data_cleaned_features[log_l1_val_list[[i]],] # get the actual observations from the fold ids
 
   val_data=listings_data_cleaned_features[log_l1_val_list[[i]],] # get the actual observations from the fold ids
 
@@ -1043,7 +1043,6 @@ cv_rf_results
 
 ```
 
-
 ```{r}
 train_sel_feat=names(gbm_gridsearch$trainingData)[2:length(names(gbm_gridsearch$trainingData))]
 train_sel_feat
@@ -1056,9 +1055,9 @@ train_sel_feat
 #features_train
 #train_sel_feat
 
-x_train=listings_data_cleaned_features %>% select(any_of(features_train))
-
-train_indices =gbm_all_gridsearch$control$index
+# x_train=listings_data_cleaned_features %>% select(any_of(features_train))
+# 
+# train_indices =gbm_all_gridsearch$control$index
 
   
 x_train=listings_data_cleaned_features %>% select(any_of(train_sel_feat))
@@ -1111,10 +1110,10 @@ df=gbm_val_data_sets[[1]]
 
 
 
-new_data=df %>% select(any_of(features_train))#
-
-pred=predict(gbm_all_gridsearch,newdata= #gbm_all_gridsearch
-new_data,type = "prob")[,'no']
+# new_data=df %>% select(any_of(train_sel_feat))#
+# 
+# pred=predict(gbm_all_gridsearch,newdata= #gbm_all_gridsearch
+# new_data,type = "prob")[,'no']
 
 
 new_data=df %>% select(any_of(train_sel_feat))#
@@ -1362,10 +1361,83 @@ p_feature_impo=vi %>% ggplot(aes(y= reorder(Variable, Importance),x=Importance))
 p_feature_impo/ gini_imp
 ```
 
-```{r,}
+```{r,pdp,echo=F,eval=T}
+library(pdp)
 # Partial plots
+# Use most important features
+best_trees=gbm_gridsearch$bestTune$n.trees
+
+top_4=vi %>% arrange(desc(Importance)) %>% head(4) %>% pull(Variable)
+
+
+
+ pdp_data=partial(gbm_gridsearch, pred.var =top_4,prob=T )
+
+
 ```
 
 ```{r}
-# Answer rest of q3
+ saveRDS(pdp_data,file='pdp_data.rds')
+ 
+write.table(pdp_data, 
+            file = "pdp_data.csv", 
+            sep = ",", 
+            col.names = T, 
+            )
+ 
+```
+
+```{r,test,eval=F,echo=F}
+
+library(forcats)
+
+test=read_csv('testing.csv')
+test
+
+# Engineer features
+test_cleaned=test %>% mutate(host_since=lubridate::ymd(host_since),
+                         host_response_time=factor(host_response_time,levels=c("within an hour","within a few hours","within a day", "a few days or more")),
+                         host_is_superhost=factor(host_is_superhost,levels=c('t','f')),
+                         room_type=factor(room_type,levels=unique(test$room_type)),
+                         instant_bookable=factor(instant_bookable,level=c('TRUE','FALSE')),
+                         host_verifications=factor(case_when(host_verifications %in% c("['phone']") ~'phone_only',
+                                                      host_verifications %in% c("['email', 'phone']" ,"['email', 'phone', 'work_email']", "['phone', 'work_email']") ~'phone_email',
+                                                      host_verifications %in% c("['email']") ~'email_only'
+                           
+                         ),levels=c('phone_only','phone_email','email_only'))
+                         
+                         
+                         )
+
+
+test_cleaned$host_since_months_int =test_cleaned %>% mutate(host_since=ymd(host_since)  ) %>% 
+  mutate(host_since_trunc=floor_date(host_since,unit='month')) %>% 
+  mutate(host_since_months_int= interval(host_since_trunc,floor_date(today(),unit='month'))%/% months(1) ) %>% mutate(current_date= floor_date( today(),unit='month' ) ) %>% 
+  dplyr::select(host_since_trunc,host_since_months_int,current_date ) %>% pull(host_since_months_int)
+
+
+
+test_cleaned  <- test_cleaned  %>%
+  mutate(instant_bookable = fct_recode( instant_bookable, 
+                             "t" = "TRUE", 
+                             "f" = "FALSE"))
+
+# Using selected feature model
+test_sel=test_cleaned %>% select(any_of(train_sel_feat))
+test_pred_probs=predict(gbm_gridsearch,newdata=test_sel,type = "prob")[,'no']
+
+# get test predictions
+test_pred_probs_df=data.frame(test_pred_probs)
+
+write.table(test_pred_probs_df, 
+            file = "AFFPAM001.csv", 
+            sep = ",", 
+            col.names = FALSE, 
+            row.names = FALSE)
+
+```
+
+```{r}
+test %>% #filter(is.null(instant_bookable)) %>% 
+  select(instant_bookable)
 ```
