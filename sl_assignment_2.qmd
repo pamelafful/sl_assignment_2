@@ -244,6 +244,7 @@ A simple decision tree to gauge which features could be important for determinin
 #| warning: false
 #| fig-height: 8
 #| fig-width: 15
+#| fig-cap: "Averages and Distributions of Features per Target Class "
 
 num_vars=listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(
   avg_host_response_rate=mean(host_response_rate),
@@ -315,8 +316,6 @@ When grouping by the target variable, fully_booked_30, the following key insight
 -   For the host age, the median (118 months) host age is \~5% higher for the "yes" class compared to the no class. Moreover no class has a longer range of host ages, although the distributions abot the median for both groups are similar; most host ages lie below the median host age.
 
 ```{r,w_vec,eval=T,echo=FALSE}
-
-
 cnt_no_obs=listings_data_cleaned %>% filter(fully_booked_30=='no') %>% count()
 cnt_yes_obs=listings_data_cleaned %>% filter(fully_booked_30=='yes') %>% count()
 class_ratio=cnt_no_obs/cnt_yes_obs
@@ -325,8 +324,6 @@ weights_vector=ifelse(listings_data_cleaned$fully_booked_30=='no',class_ratio,1)
 
 weights_vector=unlist(weights_vector)
 
-
-listings_data_cleaned$fully_booked_30[1:5];
 ```
 
 A simple decision tree is ran to see how the nodes and targets are split in relation to the features
@@ -334,6 +331,9 @@ A simple decision tree is ran to see how the nodes and targets are split in rela
 ```{r get_feat, eval=T, echo=F}
 #| message: false
 #| warning: false
+#| fig-height: 2.5
+#| fig-width: 6
+#| fig-cap: "Initial Decision Tree Feature Splits "
 
 # Can't use vanilla decision tree as the data data is extremly unbalanced :()
 # Thus we have to assign weights to the binary classes, as a proxy for importance
@@ -408,15 +408,12 @@ log_loss_van=function(ytrue,yhat){
 ```{r model_log, eval=T, echo=F}
 #| message: false
 #| warning: false
+#| tbl-cap: "Vanilla Logistic Regression Summary"
 
 library(broom) 
 library(boot)
 log_mod <- glm(fully_booked_30 ~ ., data = listings_data_cleaned_features, family = binomial)
 
-# log_mod |> 
-#   tidy() |>
-#   kable(digits = 2) |> 
-#   kable_styling(full_width = FALSE)
 
 
 bl_sum=tbl_regression(log_mod,
@@ -427,23 +424,22 @@ bl_sum=tbl_regression(log_mod,
   ) %>%
   modify_caption("**Baseline Model: Logistic Regression, All Features**")
 
-bl_sum
-# exp(coef(log_mod)) |>
-#   kbl(format = 'pdf',
-#       digits = 3, 
-#       col.names = c('<i>X</i><sub>j</sub>', 'exp(&beta;<sub>j</sub>)'),
-#       escape = FALSE) |>
-#   kable_styling(full_width = FALSE)
+
+
 
 ```
+
+![](vanilla_regress_summ.png){fig-align="center" width="479" height="465"}
 
 -   Significant Features:
 
     -   The number of reviews per month has the highest and significant effect on the probability of the target variable, a unit increase in the number of reviews per month increases the likelihood of an Air BnB not bieng fully booked by \~95% (Calculation e\*\*beta, where beta=0.67).
 
+    -   Despite the number review being positive, the actual ratings does not show a significant effect the the log likliehood of the target class.
+
     -   Latitude and Longitude- location places a significant role BnB demand and the likelihood of a BnB being fully booked- although the signs for both features are different
 
-    -   Although features host_acceptance_rate is significant, host_since_months_int and host_acceptance_rate are significant they does not seem to have an extremly negligeble effect on the likelihood of the positive class( target='no').
+    -   Although features host_acceptance_rate is significant, host_since_months_int and host_acceptance_rate are significant they does not seem to have an extremely negligible effect on the likelihood of the positive class( target='no').
 
     -   Host Listings Count
 
@@ -453,28 +449,19 @@ bl_sum
 
     -   Host Since (Measured in months)
 
--   Insignificant Features:
+-   Notable Insignificant Features:
 
-    -   The rest\* comeback
-
-    -   Most interestingly the price!-\
-
-    ```{r}
-
-
-
-
-
-    ```
+    -   Most interestingly the price did not show a stritically significant effect on the (log) lilkiehood of the target class ( although this was a key feature used the decision tree above).\
 
 **L1 Regularization**
+
+L1 Regularization with using K-folds validation is now trained on the data with AUC used as the cross validation metric.
 
 ```{r regul, eval=T, echo=F}
 #| message: false
 #| warning: false
+#| fig-cap: "CV AUC Scores Per Log Lambda Values"
 
-
-exp(0.67)-1
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
@@ -503,65 +490,64 @@ for(i in seq_along(folds)){
 # Add weights paramenter to "rebalance " the data, rare misclassification of rare class is penalized more
 # Add foldid argument to keep track of CV folds for metrics later on
 logmod_l1 <-cv.glmnet (x_train, y_train, alpha = 1, standardize = T, family = 'binomial',type.measure="auc",keep=T,foldid = foldid)
-plot(logmod_l1) #
+
+plot(logmod_l1, main = "")
+title(main = "L1 Regularization CV AUC Scores", line = 3)
+
+
 
 
 ```
 
-From the above, the best number of non-zero coefficients equals 9 (using 1SE discrimination). This is used to identify the zero-coefficient features.
+The best CV AUC score is obtained at at 0.018 with associated 6 non-zero coefficients ( out of the 25) retained by the model. \
+Most notably:
 
-```{r}
-```
+-    The number reviews per month maintains its position as having the biggest marginal impact on the (log) likelihood of the target.
 
-```{r,zero_coeff,echo=FALSE,eval=T}
-#coef(logmod_l1, s = 2.5)
-#logmod_l1$df
+-   Location variables, location and longitude are penalized to zero.
+
+-   For the categorical feature, host_response, the host_response_time_within_a_day was the only retained category in the regression
+
+-   Minimum_nights_avg_ntm was not penalised in the L1 regression even though it was not significant in the vanilla model\
+
+```{r zero_coeff, eval=T, echo=FALSE}
+#| message: false
+#| warning: false
+#| fig-height: 8
+#| fig-width: 8
 
 # penalized coeff, lambda=lambda.1se
 best_coeff=as.data.frame(as.matrix(coef(logmod_l1, s = "lambda.1se") )) %>% rownames_to_column(var = "Feature") %>% rename(Coefficient=lambda.1se)
 
 
-best_coeff %>%
+best_coeff_tbl=best_coeff %>%
   kable(
     format = "latex",
-    booktabs = TRUE
+    booktabs = TRUE,
+    caption = "L1 Logistic Regression Results, penalized variables in red"
   ) %>%
   row_spec(
     which(best_coeff$Coefficient == 0),
     color = "red"
   ) %>%
-  kable_styling(latex_options = "hold_position")
+  kable_styling(latex_options = "hold_position",
+                )
+
 
 
 
 
 ```
 
-Penalized Features:\
-
--   response ratwe
-
--   acceptance rate
-
--   is_superhost
-
--   host ver
-
--   lat and long
-
--   all those in red
+![](L1_regress_summ.png){width="509" height="442"}\
 
 **Random Forest**
 
-Using all non_zero_coeff
-
-```{r}
+```{r,rf_weights, echo=FALSE,eval=T}
 
 #Weights for the outcome classes (in order of the factor levels) # in the splitting rule
-
 class_ratio=class_ratio %>% pull(n)
 class.weights = c(class_ratio, 1) # no=1, yes=0
-class.weights
 ```
 
 ```{r,rd,echo=F,eval=TRUE}
@@ -612,12 +598,11 @@ ctrl = trainControl(method = 'cv',number = 10, verboseIter = F,savePredictions =
 rf_gridsearch =readRDS("caret_rf_grid_results_cv_weights.rds")
 ```
 
-```{r}
-
-
-```
-
-```{r,rd_res,echo=F,eval=T}
+```{r rd_res, eval=T, echo=F}
+#| message: false
+#| warning: false
+#| fig-width: 6.7
+#| fig-cap: "CV Accuracy Scores vs Hyparameters"
 results_df=data.frame(rf_gridsearch$results)
 best_param=rf_gridsearch$bestTune
 
@@ -656,23 +641,25 @@ kable(rf_gridsearch$bestTune,caption='Best RF HyperParameters')
 
 ```
 
+The best CV accuracy score is achieved at the parameters shown below
+
 **Boosting Model**
 
-Used non-zero features from the regularized model to speed up training- we've established that the majority of these are not relevant anyway through CV and the
+The gbm model is trained on the non-zero features from the L1 regularized model to speed up training,, as it has been reasonably established that the majority of these are not meaningful to the model.
 
-Used features:
+Also, a custom log-loss function is used as the primary metric for the the cross validation training- thus the hyper parameters that yield the lowest log loss function are chosen as the best during training.
 
 ```{r,non_zero_coeff,echo=F,eval=F}
 non_zero_feats=best_coeff %>% filter(Coefficient!=0) %>% pull(Feature)
-non_zero_feats
 
 ```
 
-```{r,gbm_fit,eval=T,echo=F}
+```{r gbm_fit, eval=T, echo=F}
+#| message: false
+#| warning: false
 library(doParallel)
 library(foreach)
 set.seed(123)
-library
 
 # ctrl = trainControl(method = 'cv', number = 10, verboseIter = F,                            classProbs = TRUE,summaryFunction =log_loss,savePredictions ="final")
 # 
@@ -749,13 +736,18 @@ gbm_gridsearch$results %>%
   )
 ```
 
-```{r gbm_hp_sel, eval=F, echo=T}
+```{r gbm_hp_sel, eval=T, echo=F}
 #| message: false
 #| warning: false
-plot(gbm_gridsearch)
+#| fig-cap: "GBM CV Log Loss Values vs Hyperparameters"
+#| fig-height: 6
+
+
+plot(gbm_gridsearch,main = "GBM CV Log Loss Scores")
+
 ```
 
-The best parameter is acquired at the hyperparameter combinations below:\
+The best hyper parameters is acquired at the hyperparameter combinations below:\
 
 ```{r, best_com, eval=TRUE,echo=FALSE}
 kable(gbm_gridsearch$bestTune %>% dplyr::select(n.trees,interaction.depth,shrinkage) %>% 
