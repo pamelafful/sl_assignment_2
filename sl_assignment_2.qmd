@@ -111,12 +111,16 @@ library(ROCR)
 ```{r, data_load, eval=T,echo=F}
 
 listings_data=read.csv('listings.csv')
-nrow(listings_data);ncol(listings_data)
 ```
 
-# Introduction: Exploartory Data Analysis
+# Introduction: Exploratory Data Analysis
 
-The training data consits of 10 rows of observations across 25 features. The the data is significantly imbalanced in favour of the target class at with \~81% of observations in the filly_booked_30='no' class.\
+The training data consists of 10 rows of observations across 25 features. The data is significantly imbalanced in favour of the target class at with \~81% of observations in the filly_booked_30='no' class.
+
+Some cleaning and transforming was done on the features to make them machine learning friendly, most notably:
+
+-   Transformed all non-numerical features into factors
+-   Transform the **host_since_int** variable which gives the date from which the host started hostig BnBs into an interger that calculates the host's "age" in months. The feature is saved as **host_since_months_int.**\
 
 ```{r, data_wrang, eval=T,echo=F}
 
@@ -136,40 +140,13 @@ listings_data_cleaned=listings_data %>% mutate(host_since=lubridate::ymd(host_si
                          )
 ```
 
-```{r,eda,eval=F,echo=F}
-
-# Plot the Air BNB locations
-
-
-cols <- ifelse(listings_data_cleaned$fully_booked_30 == 'no', "red", "blue")
-
-
-plot(listings_data_cleaned$longitude,
-      listings_data_cleaned$latitude,
-     xlab = "Longitude",
-     ylab = "Latitude",
-       pch = 16,
-       cex = 0.5,
-       col = cols)
-
-legend("topright",
-       legend = c("Fully Booked", "Not Fully Booked"),
-       col = c("blue", "red"),
-       pch = 16,
-       bty = "n",
-       title = "Fully Booked 30",
-       cex = 0.9)
-```
-
-```{r, target_dist, eval=TRUE, echo=F}
+```{r target_dist, eval=TRUE, echo=F}
 #| message: false
 #| warning: false
-#| fig-subcap: 
-#|   - "Spatial Plot of BNB Listings"
-#|   - "Fully Booked 30 Label Distribution"
+#| fig-height: 6
+#| fig-subcap: Spatial Plot of BNB Listings,Fully Booked 30 Label Distribution
+#| fig-width: 8
 #| layout-ncol: 2
-
-
 
 
 # Plot the Air BNB locations
@@ -251,18 +228,7 @@ a= listings_data_cleaned %>% ggplot(aes(x=price,fill=fully_booked_30)) +
   theme_minimal()
 
 
-a <- listings_data_cleaned %>% 
-  ggplot(aes(x = fully_booked_30, 
-             y = host_since_months_int, 
-             fill = fully_booked_30)) +
-  geom_boxplot() +
-  labs(
-    title = "Host Age By 30d Fully Booked Status",
-    x = "30-day booked status",
-    y = "Host age (months)",
-    fill = "30 booked status"
-  ) +
-  theme_minimal()
+
 
 
 
@@ -271,21 +237,7 @@ a <- listings_data_cleaned %>%
 
 ```
 
-Use a novel decision tree to gauge which features could be important for determining the response variable. Since we have an imbalanced class, a weighted decision tree is used:\
-<https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>
-
-```{r}
-num_vars=listings_data_cleaned %>% group_by(fully_booked_30) %>% summarize(
-  avg_host_response_rate=mean(host_response_rate),
-  avg_host_acceptance_rate=mean(host_acceptance_rate),
-  avg_host_listings_count=mean(host_listings_count),
-  avg_price=mean(price),
-  avg_minimum_nights=mean(minimum_nights),
-  avg_review_scores_rating=mean(review_scores_rating)
-)
-
-num_vars
-```
+A simple decision tree to gauge which features could be important for determining the response variable. Since we have an imbalanced class, a weighted decision tree is used. The weights are a vector of ratios of the grouped observations counts of the different classes with the minority "yes" class. bieng weighted more. The ensure that the model is penalized more for misclassifying the minority class((<https://machinelearningmastery.com/cost-sensitive-decision-trees-for-imbalanced-classification/>))\
 
 ```{r, bar_plots,echo=F,eval=T}
 #| message: false
@@ -357,12 +309,9 @@ vars <- c(
 
 When grouping by the target variable, fully_booked_30, the following key insights are observed:
 
--    Average Price and average minimum nights are slightly higher for observations in the "yes" class, with the gap much wider foraverage minimum nights (\~ 50 % higher than the "no" class).
-
+-   Average Price and average minimum nights are slightly higher for observations in the "yes" class, with the gap much wider foraverage minimum nights (\~ 50 % higher than the "no" class).
 -   Average review scores and average response rate are fairly evenly split across the two target classes
-
 -   Average host listings are higher for the "no" class with an average of \~20 listings.
-
 -   For the host age, the median (118 months) host age is \~5% higher for the "yes" class compared to the no class. Moreover no class has a longer range of host ages, although the distributions abot the median for both groups are similar; most host ages lie below the median host age.
 
 ```{r,w_vec,eval=T,echo=FALSE}
@@ -412,10 +361,10 @@ eda_tree <-  rpart(fully_booked_30 ~ ., data = listings_data_cleaned_features,we
 
 ![Initial Decision Tree Feature/ Class Splits](tree.png){width="410"}
 
-Features used to reduce RSS during splitting were **reviews_per_month (the largest reduction), minimum_night,** and **price.**\
-BnB listings with reviews_per_month greater than 0.695 all had terminal nodes with the categorisation "no" for the response variable. Price and minimum nights were determining factors for listings with a minimum number of nights less than 2.5, which ended in "yes". Further splitting this region, for listings where the minimum was greater than 2.5, listings with prices greater than 905.5 were also categorised as "yes".
+Features used to reduce RSS during splitting were **reviews_per_month (the largest reduction), minimum_nr_night,** and **price.**\
+BnB listings with reviews_per_month greater than 0.695 all had terminal nodes categorised as "no" for the response variable. Price and minimum nights were determining factors for listings with a minimum number of nights less than 2.5, which ended in "yes". Further splitting this region, for listings where the minimum was greater than 2.5, listings with prices greater than 905.5 were also categorised as "yes".
 
-```{r scatter_plot, eval=T, echo=FALSE}
+```{r scatter_plot, eval=F, echo=FALSE}
 #| message: false
 #| warning: false
 #| fig-height: 8
@@ -432,8 +381,6 @@ ggpairs( 1:4,mapping = aes(color = fully_booked_30), legend = 1 ) +
 ```
 
 # Model Training
-
-Define the Log Loss Function
 
 ```{r,logloss,eval=T,echo=F}
 log_loss=function(data,lev = NULL, model = NULL){
@@ -466,15 +413,13 @@ library(broom)
 library(boot)
 log_mod <- glm(fully_booked_30 ~ ., data = listings_data_cleaned_features, family = binomial)
 
-
-
 # log_mod |> 
 #   tidy() |>
 #   kable(digits = 2) |> 
 #   kable_styling(full_width = FALSE)
 
 
-bl_summ=tbl_regression(log_mod,
+bl_sum=tbl_regression(log_mod,
                        intercept = TRUE) %>%
   add_significance_stars() %>%
   add_glance_source_note(
@@ -482,6 +427,7 @@ bl_summ=tbl_regression(log_mod,
   ) %>%
   modify_caption("**Baseline Model: Logistic Regression, All Features**")
 
+bl_sum
 # exp(coef(log_mod)) |>
 #   kbl(format = 'pdf',
 #       digits = 3, 
@@ -491,19 +437,15 @@ bl_summ=tbl_regression(log_mod,
 
 ```
 
--   
-
-    ![Baseline Logistic Regression Summary](logistic_regress_summary.png){width="473" height="555"}
-
 -   Significant Features:
 
-    -   Intercept ( which absorbed the omitted categorical variables: within a few hours, instant bookable=T)
+    -   The number of reviews per month has the highest and significant effect on the probability of the target variable, a unit increase in the number of reviews per month increases the likelihood of an Air BnB not bieng fully booked by \~95% (Calculation e\*\*beta, where beta=0.67).
 
-    -   Latitude and Longitude,
+    -   Latitude and Longitude- location places a significant role BnB demand and the likelihood of a BnB being fully booked- although the signs for both features are different
 
-    -   Bedrooms,
+    -   Although features host_acceptance_rate is significant, host_since_months_int and host_acceptance_rate are significant they does not seem to have an extremly negligeble effect on the likelihood of the positive class( target='no').
 
-    -   Reviews per month
+    -   Host Listings Count
 
     -   Review Score Ratings
 
@@ -517,11 +459,22 @@ bl_summ=tbl_regression(log_mod,
 
     -   Most interestingly the price!-\
 
+    ```{r}
+
+
+
+
+
+    ```
+
 **L1 Regularization**
 
 ```{r regul, eval=T, echo=F}
 #| message: false
 #| warning: false
+
+
+exp(0.67)-1
 
 library(plotmo) #Specifically for glmnet plotting (also has a gbm function)
 
